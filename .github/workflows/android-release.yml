@@ -1,0 +1,48 @@
+name: Build and Release Android APK
+
+on:
+  push:
+    tags:
+      - 'v*' # 当你打上 v1.0, v2.0 等类似标签并推送时自动触发构建发布
+  workflow_dispatch: # 让你可以在网页端手动点击运行
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 下载代码 (Checkout)
+        uses: actions/checkout@v4
+
+      - name: 设置 Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: 赋予 Gradle 脚本执行权限
+        run: chmod +x gradlew
+
+      - name: 编译 Debug 版 APK
+        # 为了避免配置复杂的签名证书 (Keystore)，这里默认构建带有默认签名的 Debug 版 APK，任何手机均可直接安装
+        run: ./gradlew assembleDebug
+
+      - name: 重命名 APK 文件
+        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/AndroidVRPlayer.apk
+
+      - name: 收集 APK 作为产物存档
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidVRPlayer-APK
+          path: app/build/outputs/apk/debug/AndroidVRPlayer.apk
+
+      - name: 发布到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: app/build/outputs/apk/debug/AndroidVRPlayer.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

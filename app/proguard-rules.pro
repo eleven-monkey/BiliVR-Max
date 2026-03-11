@@ -1,0 +1,2 @@
+# ProGuard rules
+-keepattributes *Annotation*
