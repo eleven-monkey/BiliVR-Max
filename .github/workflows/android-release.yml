@@ -20,14 +20,15 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: 赋予 Gradle 脚本执行权限
-        run: chmod +x gradlew
+      - name: 配置 Gradle 环境
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
 
       - name: 编译 Debug 版 APK
-        # 为了避免配置复杂的签名证书 (Keystore)，这里默认构建带有默认签名的 Debug 版 APK，任何手机均可直接安装
-        run: ./gradlew assembleDebug
+        # 直接使用安装好的 gradle 构建，而不需要 ./gradlew
+        run: gradle assembleDebug
 
       - name: 重命名 APK 文件
         run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/AndroidVRPlayer.apk
