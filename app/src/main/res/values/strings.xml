@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">B站VR播放器</string>
+    <string name="app_name">BiliVR Max</string>
     <string name="hint_video_url">粘贴B站链接 或 视频直链URL</string>
     <string name="btn_play_sbs">SBS 模式播放</string>
     <string name="btn_use_test_url">使用测试视频</string>
-    <string name="title_main">B站 VR SBS 播放器</string>
+    <string name="title_main">BiliVR Max</string>
     <string name="subtitle_main">将视频以左右分屏模式播放，放入VR头显观看</string>
     <string name="tap_to_pause">点击屏幕 暂停/继续</string>
     <string name="error_empty_url">请输入视频URL</string>
