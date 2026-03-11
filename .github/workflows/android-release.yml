@@ -11,6 +11,10 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
 
+    # 声明权限：允许 GitHub Actions 往仓库中写入 Release 文件包
+    permissions:
+      contents: write
+
     steps:
       - name: 下载代码 (Checkout)
         uses: actions/checkout@v4
