@@ -31,6 +31,11 @@ class VRSettings(context: Context) {
         const val DISTORTION_K1_MAX = 50
         const val DISTORTION_K2_MAX = 30
         const val DISTORTION_DEFAULT = 0
+
+        private const val KEY_SUBTITLE_DEPTH = "subtitle_depth"
+        const val SUBTITLE_DEPTH_MIN = 0
+        const val SUBTITLE_DEPTH_MAX = 100
+        const val SUBTITLE_DEPTH_DEFAULT = 15
     }
 
     private val prefs: SharedPreferences =
@@ -60,4 +65,9 @@ class VRSettings(context: Context) {
     var sbs3dMode: Boolean
         get() = prefs.getBoolean(KEY_SBS3D_MODE, false)
         set(value) = prefs.edit().putBoolean(KEY_SBS3D_MODE, value).apply()
+
+    /** 字幕深度（正值表示往内靠拢，立体出屏偏移量） */
+    var subtitleDepth: Int
+        get() = prefs.getInt(KEY_SUBTITLE_DEPTH, SUBTITLE_DEPTH_DEFAULT)
+        set(value) = prefs.edit().putInt(KEY_SUBTITLE_DEPTH, value.coerceIn(SUBTITLE_DEPTH_MIN, SUBTITLE_DEPTH_MAX)).apply()
 }

@@ -1,7 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
+
+    <!-- 左右双目的字幕渲染容器 - 移动到最上层确保不被背景遮挡 -->
+    <LinearLayout
+        android:id="@+id/subtitleContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:baselineAligned="false"
+        android:orientation="horizontal"
+        android:clickable="false"
+        android:focusable="false"
+        android:elevation="1dp"
+        android:paddingBottom="40dp">
+
+        <androidx.media3.ui.SubtitleView
+            android:id="@+id/subtitleLeft"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
+
+        <androidx.media3.ui.SubtitleView
+            android:id="@+id/subtitleRight"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
+    </LinearLayout>
 
     <!-- 控件覆盖层 -->
     <LinearLayout
@@ -9,8 +35,9 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="#80000000"
+        android:background="#60000000"
         android:visibility="gone"
+        android:elevation="2dp"
         android:padding="16dp">
 
         <!-- 顶部：标题 + 设置按钮 -->
@@ -31,17 +58,6 @@
                 android:textStyle="bold"
                 android:maxLines="1"
                 android:ellipsize="end" />
-
-            <TextView
-                android:id="@+id/tvQuality"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_below="@id/tvTitle"
-                android:layout_alignParentStart="true"
-                android:text=""
-                android:textColor="#80FFFFFF"
-                android:textSize="12sp"
-                android:layout_marginTop="2dp" />
 
             <ImageButton
                 android:id="@+id/btnSettings"
@@ -113,137 +129,85 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- VR 设置面板（默认隐藏） -->
-    <LinearLayout
+    <!-- VR 设置面板：添加 ScrollView 解决横屏显示不全 -->
+    <ScrollView
         android:id="@+id/settingsPanel"
-        android:layout_width="320dp"
+        android:layout_width="360dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:orientation="vertical"
         android:background="@drawable/settings_panel_bg"
-        android:padding="24dp"
         android:visibility="gone"
-        android:elevation="8dp">
+        android:elevation="10dp"
+        android:scrollbars="none">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="⚙ VR 显示设置"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="16dp" />
-
-        <!-- SBS 3D 模式切换 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="16dp">
+            android:orientation="vertical"
+            android:padding="20dp">
 
             <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="SBS 3D 模式（左右分屏视频）"
-                android:textColor="#CCFFFFFF"
-                android:textSize="14sp" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchSBS3D"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
+                android:layout_height="wrap_content"
+                android:text="⚙ VR 显示设置"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="12dp" />
+
+            <!-- SBS 3D 模式切换 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="SBS 3D 视频模式"
+                    android:textColor="#CCFFFFFF"
+                    android:textSize="14sp" />
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchSBS3D"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView android:id="@+id/tvScaleLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="画面大小" android:textColor="#CCFFFFFF" android:textSize="13sp" />
+            <SeekBar android:id="@+id/seekScale" android:layout_width="match_parent" android:layout_height="wrap_content" android:min="50" android:max="100" android:progress="85" android:layout_marginBottom="12dp" />
+
+            <TextView android:id="@+id/tvGapLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="双屏间距" android:textColor="#CCFFFFFF" android:textSize="13sp" />
+            <SeekBar android:id="@+id/seekGap" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="1200" android:progress="600" android:layout_marginBottom="12dp" />
+
+            <TextView android:id="@+id/tvK1Label" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="畸变矫正 K1" android:textColor="#CCFFFFFF" android:textSize="13sp" />
+            <SeekBar android:id="@+id/seekK1" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="50" android:layout_marginBottom="12dp" />
+
+            <TextView android:id="@+id/tvK2Label" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="畸变矫正 K2" android:textColor="#CCFFFFFF" android:textSize="13sp" />
+            <SeekBar android:id="@+id/seekK2" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="30" android:layout_marginBottom="12dp" />
+
+            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#40FFFFFF" android:layout_marginBottom="12dp" />
+
+            <TextView android:id="@+id/tvSubtitleDepthLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="字幕立体深度" android:textColor="#CCFFFFFF" android:textSize="13sp" />
+            <SeekBar android:id="@+id/seekSubtitleDepth" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" android:progress="15" android:layout_marginBottom="16dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnToggleSubtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="切换/开启字幕"
+                app:backgroundTint="#FF6750A4"
+                style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                android:layout_marginBottom="12dp"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCloseSettings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="关闭设置"
+                style="@style/Widget.MaterialComponents.Button.TextButton" />
         </LinearLayout>
-
-        <!-- 画面大小 -->
-        <TextView
-            android:id="@+id/tvScaleLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="画面大小: 85%"
-            android:textColor="#CCFFFFFF"
-            android:textSize="14sp"
-            android:layout_marginBottom="4dp" />
-
-        <SeekBar
-            android:id="@+id/seekScale"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:min="50"
-            android:max="100"
-            android:progress="85"
-            android:progressTint="#FF6750A4"
-            android:thumbTint="#FF6750A4"
-            android:layout_marginBottom="16dp" />
-
-        <!-- 双屏间距 -->
-        <TextView
-            android:id="@+id/tvGapLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="双屏间距: 0"
-            android:textColor="#CCFFFFFF"
-            android:textSize="14sp"
-            android:layout_marginBottom="4dp" />
-
-        <SeekBar
-            android:id="@+id/seekGap"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="1200"
-            android:progress="600"
-            android:progressTint="#FF6750A4"
-            android:thumbTint="#FF6750A4"
-            android:layout_marginBottom="16dp" />
-
-        <!-- 畸变矫正 K1 -->
-        <TextView
-            android:id="@+id/tvK1Label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="畸变矫正 K1: 0.00"
-            android:textColor="#CCFFFFFF"
-            android:textSize="14sp"
-            android:layout_marginBottom="4dp" />
-
-        <SeekBar
-            android:id="@+id/seekK1"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="50"
-            android:progress="0"
-            android:progressTint="#FFF38BA8"
-            android:thumbTint="#FFF38BA8"
-            android:layout_marginBottom="16dp" />
-
-        <!-- 畸变矫正 K2 -->
-        <TextView
-            android:id="@+id/tvK2Label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="畸变矫正 K2: 0.00"
-            android:textColor="#CCFFFFFF"
-            android:textSize="14sp"
-            android:layout_marginBottom="4dp" />
-
-        <SeekBar
-            android:id="@+id/seekK2"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="30"
-            android:progress="0"
-            android:progressTint="#FFF38BA8"
-            android:thumbTint="#FFF38BA8"
-            android:layout_marginBottom="16dp" />
-
-        <!-- 关闭按钮 -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnCloseSettings"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:text="关闭设置"
-            android:textSize="14sp" />
-    </LinearLayout>
+    </ScrollView>
 
 </FrameLayout>

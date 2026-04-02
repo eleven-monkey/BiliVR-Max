@@ -14,6 +14,10 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import com.vrplayer.bilisbs.bilibili.BilibiliParser
 import com.vrplayer.bilisbs.bilibili.CookieStore
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -33,6 +37,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
 
     private lateinit var cookieStore: CookieStore
+
+    // 权限请求
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
+            Toast.makeText(this, "存储权限已授予", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "需要存储权限才能加载本地字幕", Toast.LENGTH_LONG).show()
+        }
+    }
 
     // 登录结果回调
     private val loginLauncher = registerForActivityResult(
@@ -74,6 +90,9 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
 
         updateLoginUI()
+
+        // 请求存储权限
+        checkAndRequestStoragePermission()
 
         // 点击"SBS 模式播放"
         btnPlay.setOnClickListener {
@@ -173,5 +192,21 @@ class MainActivity : AppCompatActivity() {
         progressBar.visibility = if (loading) View.VISIBLE else View.GONE
         statusText.visibility = if (loading) View.VISIBLE else View.GONE
         statusText.text = message
+    }
+
+    private fun checkAndRequestStoragePermission() {
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        
+        val needRequest = permissions.any { 
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED 
+        }
+        
+        if (needRequest) {
+            permissionLauncher.launch(permissions)
+        }
     }
 }

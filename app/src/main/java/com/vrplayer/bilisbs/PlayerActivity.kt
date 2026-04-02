@@ -19,20 +19,33 @@ import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.SubtitleView
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.text.CueGroup
 import com.vrplayer.bilisbs.renderer.SBSRenderer
+import java.io.File
+import android.provider.DocumentsContract
+import android.provider.MediaStore
+import android.database.Cursor
+import java.util.Locale
 
+@OptIn(UnstableApi::class)
 class PlayerActivity : AppCompatActivity() {
 
     companion object {
@@ -52,7 +65,6 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var controlsOverlay: View
     private lateinit var settingsPanel: View
     private lateinit var tvTitle: TextView
-    private lateinit var tvQuality: TextView
     private lateinit var btnPlayPause: ImageButton
     private lateinit var seekBar: SeekBar
     private lateinit var tvCurrentTime: TextView
@@ -66,16 +78,19 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var seekK1: SeekBar
     private lateinit var seekK2: SeekBar
     private lateinit var switchSBS3D: SwitchCompat
+    private lateinit var seekSubtitleDepth: SeekBar
+    private lateinit var tvSubtitleDepthLabel: TextView
+    private lateinit var subtitleLeft: SubtitleView
+    private lateinit var subtitleRight: SubtitleView
+    private lateinit var btnToggleSubtitle: View
 
     private lateinit var vrSettings: VRSettings
     private val handler = Handler(Looper.getMainLooper())
     private var controlsVisible = false
     private var isSeeking = false
 
-    // 自动隐藏控件的 Runnable
     private val hideControlsRunnable = Runnable { hideControls() }
 
-    // 定时更新进度条
     private val updateProgressRunnable = object : Runnable {
         override fun run() {
             updateProgress()
@@ -83,23 +98,19 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    // 手势检测器
     private lateinit var gestureDetector: GestureDetector
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemUI()
 
         vrSettings = VRSettings(this)
-
-        // 创建根布局
         val rootLayout = FrameLayout(this)
 
-        // 1. GLSurfaceView
-        glSurfaceView = GLSurfaceView(this)
-        glSurfaceView.setEGLContextClientVersion(2)
+        glSurfaceView = GLSurfaceView(this).apply {
+            setEGLContextClientVersion(2)
+        }
 
         renderer = SBSRenderer(
             onSurfaceReady = { surface ->
@@ -110,22 +121,23 @@ class PlayerActivity : AppCompatActivity() {
 
         glSurfaceView.setRenderer(renderer)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
-
         rootLayout.addView(glSurfaceView)
 
-        // 2. 控件覆盖层
+        // 先添加控制界面（包含字幕视图），确保在GLSurfaceView上方
         val controlsView = layoutInflater.inflate(R.layout.player_controls, rootLayout, false)
         rootLayout.addView(controlsView)
 
         setContentView(rootLayout)
-
-        // 绑定控件
         bindControls()
-
-        // 应用保存的 VR 设置
         applyVRSettings()
+        
+        // 确保字幕视图在最上层且可点击穿透
+        findViewById<View>(R.id.subtitleContainer)?.apply {
+            bringToFront()
+            isClickable = false
+            isFocusable = false
+        }
 
-        // 手势检测
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (settingsPanel.visibility == View.VISIBLE) {
@@ -149,7 +161,6 @@ class PlayerActivity : AppCompatActivity() {
             }
         })
 
-        // 触摸事件分发给手势检测器
         rootLayout.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
             true
@@ -160,7 +171,6 @@ class PlayerActivity : AppCompatActivity() {
         controlsOverlay = findViewById(R.id.controlsOverlay)
         settingsPanel = findViewById(R.id.settingsPanel)
         tvTitle = findViewById(R.id.tvTitle)
-        tvQuality = findViewById(R.id.tvQuality)
         btnPlayPause = findViewById(R.id.btnPlayPause)
         seekBar = findViewById(R.id.seekBar)
         tvCurrentTime = findViewById(R.id.tvCurrentTime)
@@ -174,152 +184,155 @@ class PlayerActivity : AppCompatActivity() {
         seekK1 = findViewById(R.id.seekK1)
         seekK2 = findViewById(R.id.seekK2)
         switchSBS3D = findViewById(R.id.switchSBS3D)
+        seekSubtitleDepth = findViewById(R.id.seekSubtitleDepth)
+        tvSubtitleDepthLabel = findViewById(R.id.tvSubtitleDepthLabel)
+        subtitleLeft = findViewById(R.id.subtitleLeft)
+        subtitleRight = findViewById(R.id.subtitleRight)
+        btnToggleSubtitle = findViewById(R.id.btnToggleSubtitle)
 
-        // 显示标题
-        val title = intent.getStringExtra(EXTRA_TITLE)
-        tvTitle.text = title ?: "视频播放中"
+        val captionStyle = CaptionStyleCompat(
+            android.graphics.Color.WHITE,
+            android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT,
+            CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+            android.graphics.Color.BLACK,
+            null
+        )
+        listOf(subtitleLeft, subtitleRight).forEach {
+            it.setStyle(captionStyle)
+            it.setFractionalTextSize(0.06f)
+            it.setApplyEmbeddedStyles(true) 
+        }
 
-        // 暂停/播放按钮
+        tvTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: "视频播放中"
+
         btnPlayPause.setOnClickListener {
             togglePlayback()
             resetAutoHide()
         }
 
-        // 设置按钮
         findViewById<ImageButton>(R.id.btnSettings).setOnClickListener {
-            settingsPanel.visibility =
-                if (settingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            settingsPanel.visibility = if (settingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             resetAutoHide()
         }
 
-        // 关闭设置按钮
         findViewById<View>(R.id.btnCloseSettings).setOnClickListener {
             settingsPanel.visibility = View.GONE
             resetAutoHide()
         }
 
-        // 进度条
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     val duration = player?.duration ?: 0
-                    val position = duration * progress / 1000
-                    tvCurrentTime.text = formatTime(position)
+                    tvCurrentTime.text = formatTime(duration * progress / 1000)
                 }
             }
             override fun onStartTrackingTouch(sb: SeekBar?) { isSeeking = true }
             override fun onStopTrackingTouch(sb: SeekBar?) {
                 isSeeking = false
                 val duration = player?.duration ?: 0
-                val position = duration * (sb?.progress ?: 0) / 1000
-                player?.seekTo(position)
+                player?.seekTo(duration * (sb?.progress ?: 0) / 1000)
                 resetAutoHide()
             }
         })
 
-        // VR 画面大小滑块
-        seekScale.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                tvScaleLabel.text = "画面大小: ${progress}%"
-                if (fromUser) {
-                    vrSettings.screenScale = progress
-                    val realGap = seekGap.progress - 600
-                    renderer?.setDisplayParams(progress, realGap)
-                }
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        seekScale.setOnSeekBarChangeListener(createVRSeekListener { progress ->
+            vrSettings.screenScale = progress
+            renderer?.setDisplayParams(progress, vrSettings.screenGap)
+            tvScaleLabel.text = "画面大小: $progress%"
         })
 
-        // VR 双屏间距滑块 (SeekBar 0~1200, 中点600 = 间距0)
-        seekGap.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                val realGap = progress - 600  // 转为 -600 ~ +600
-                tvGapLabel.text = "双屏间距: ${realGap}"
-                if (fromUser) {
-                    vrSettings.screenGap = realGap
-                    renderer?.setDisplayParams(seekScale.progress, realGap)
-                }
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        seekGap.setOnSeekBarChangeListener(createVRSeekListener { progress ->
+            val realGap = progress - 600
+            vrSettings.screenGap = realGap
+            renderer?.setDisplayParams(vrSettings.screenScale, realGap)
+            tvGapLabel.text = "双屏间距: $realGap"
         })
 
-        // 畸变矫正 K1 滑块
-        seekK1.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                tvK1Label.text = "畸变矫正 K1: ${String.format("%.2f", progress / 100f)}"
-                if (fromUser) {
-                    vrSettings.distortionK1 = progress
-                    renderer?.setDistortion(progress / 100f, seekK2.progress / 100f)
-                }
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        seekK1.setOnSeekBarChangeListener(createVRSeekListener { progress ->
+            vrSettings.distortionK1 = progress
+            renderer?.setDistortion(progress / 100f, vrSettings.distortionK2 / 100f)
+            tvK1Label.text = "畸变矫正 K1: ${String.format(Locale.US, "%.2f", progress / 100f)}"
         })
 
-        // 畸变矫正 K2 滑块
-        seekK2.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                tvK2Label.text = "畸变矫正 K2: ${String.format("%.2f", progress / 100f)}"
-                if (fromUser) {
-                    vrSettings.distortionK2 = progress
-                    renderer?.setDistortion(seekK1.progress / 100f, progress / 100f)
-                }
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        seekK2.setOnSeekBarChangeListener(createVRSeekListener { progress ->
+            vrSettings.distortionK2 = progress
+            renderer?.setDistortion(vrSettings.distortionK1 / 100f, progress / 100f)
+            tvK2Label.text = "畸变矫正 K2: ${String.format(Locale.US, "%.2f", progress / 100f)}"
         })
 
-        // SBS 3D 模式开关
         switchSBS3D.setOnCheckedChangeListener { _, isChecked ->
             vrSettings.sbs3dMode = isChecked
             renderer?.setSBS3DMode(isChecked)
         }
+
+        seekSubtitleDepth.setOnSeekBarChangeListener(createVRSeekListener { progress ->
+            vrSettings.subtitleDepth = progress
+            applySubtitleDepth(progress)
+            tvSubtitleDepthLabel.text = "字幕立体深度: $progress"
+        })
+
+        btnToggleSubtitle.setOnClickListener {
+            player?.let { p ->
+                val params = p.trackSelectionParameters
+                val isDisabled = params.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
+                p.trackSelectionParameters = params.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !isDisabled)
+                    .build()
+                showToast(if (isDisabled) "字幕已开启" else "字幕已关闭")
+                resetAutoHide()
+            }
+        }
     }
 
-    /** 从 SharedPreferences 恢复设置并应用 */
+    private fun createVRSeekListener(onChanged: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+            if (fromUser) onChanged(progress)
+        }
+        override fun onStartTrackingTouch(sb: SeekBar?) {}
+        override fun onStopTrackingTouch(sb: SeekBar?) {}
+    }
+
+    private fun applySubtitleDepth(depth: Int) {
+        subtitleLeft.translationX = depth.toFloat()
+        subtitleRight.translationX = -depth.toFloat()
+    }
+
     private fun applyVRSettings() {
         val scale = vrSettings.screenScale
         val gap = vrSettings.screenGap
         val k1 = vrSettings.distortionK1
         val k2 = vrSettings.distortionK2
+        val sbs3d = vrSettings.sbs3dMode
+        val subDepth = vrSettings.subtitleDepth
 
         seekScale.progress = scale
         seekGap.progress = gap + 600
         seekK1.progress = k1
         seekK2.progress = k2
+        switchSBS3D.isChecked = sbs3d
+        seekSubtitleDepth.progress = subDepth
 
-        tvScaleLabel.text = "画面大小: ${scale}%"
-        tvGapLabel.text = "双屏间距: ${gap}"
-        tvK1Label.text = "畸变矫正 K1: ${String.format("%.2f", k1 / 100f)}"
-        tvK2Label.text = "畸变矫正 K2: ${String.format("%.2f", k2 / 100f)}"
+        tvScaleLabel.text = "画面大小: $scale%"
+        tvGapLabel.text = "双屏间距: $gap"
+        tvK1Label.text = "畸变矫正 K1: ${String.format(Locale.US, "%.2f", k1 / 100f)}"
+        tvK2Label.text = "畸变矫正 K2: ${String.format(Locale.US, "%.2f", k2 / 100f)}"
+        tvSubtitleDepthLabel.text = "字幕立体深度: $subDepth"
 
         renderer?.setDisplayParams(scale, gap)
         renderer?.setDistortion(k1 / 100f, k2 / 100f)
-
-        val sbs3d = vrSettings.sbs3dMode
-        switchSBS3D.isChecked = sbs3d
         renderer?.setSBS3DMode(sbs3d)
+        applySubtitleDepth(subDepth)
     }
 
-    // =========== 播放控制 ===========
-
     private fun initPlayer(surface: Surface) {
-        val videoUrl = intent.getStringExtra(EXTRA_VIDEO_URL)
+        val videoUrl = intent.getStringExtra(EXTRA_VIDEO_URL) ?: return
         val audioUrl = intent.getStringExtra(EXTRA_AUDIO_URL)
 
-        if (videoUrl.isNullOrEmpty()) {
-            Toast.makeText(this, "未提供视频URL", Toast.LENGTH_LONG).show()
-            finish()
-            return
-        }
-
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .setUserAgent("BiliSBSVRPlayer")
             .setDefaultRequestProperties(mapOf("Referer" to "https://www.bilibili.com"))
-
-        // 使用 DefaultDataSource包装HttpDataSource，使其同时支持 http(s), content://, file:// 等多种协议
         val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
 
         val exoPlayer = ExoPlayer.Builder(this)
@@ -327,13 +340,52 @@ class PlayerActivity : AppCompatActivity() {
             .build()
         exoPlayer.setVideoSurface(surface)
 
+        val subtitleConfigs = mutableListOf<MediaItem.SubtitleConfiguration>()
+        val realPath = getRealPathFromUri(videoUrl)
+        Log.d(TAG, "视频URL: $videoUrl, 真实路径: $realPath")
+        if (realPath != null) {
+            val videoFile = File(realPath)
+            Log.d(TAG, "视频文件存在: ${videoFile.exists()}, 可读: ${videoFile.canRead()}")
+            if (videoFile.exists()) {
+                val dir = videoFile.parentFile
+                val baseName = videoFile.nameWithoutExtension
+                Log.d(TAG, "查找字幕: 目录=${dir?.absolutePath}, 基础名=$baseName")
+                
+                if (dir != null && dir.exists()) {
+                    Log.d(TAG, "目录可读: ${dir.canRead()}")
+                    val allFiles = dir.listFiles()
+                    Log.d(TAG, "目录下共有 ${allFiles?.size ?: 0} 个文件")
+                    allFiles?.take(10)?.forEach { f ->
+                        Log.d(TAG, "  文件: ${f.name}")
+                    }
+                    
+                    val subtitleFiles = dir.listFiles { _, name ->
+                        val matches = name.startsWith(baseName) && (name.endsWith(".srt", true) || name.endsWith(".ass", true))
+                        if (matches) Log.d(TAG, "  ✅ 匹配字幕: $name")
+                        matches
+                    }
+                    
+                    subtitleFiles?.forEach { subFile ->
+                        val mimeType = if (subFile.name.endsWith(".ass", true)) MimeTypes.TEXT_SSA else MimeTypes.APPLICATION_SUBRIP
+                        subtitleConfigs.add(MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
+                            .setMimeType(mimeType)
+                            .setLanguage("zh")
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                            .build())
+                        Log.d(TAG, "✅ 已挂载字幕: ${subFile.name}")
+                    }
+                }
+            }
+        }
+        Log.d(TAG, "共找到 ${subtitleConfigs.size} 个字幕文件")
+
+        val mediaItemBuilder = MediaItem.Builder().setUri(Uri.parse(videoUrl)).setSubtitleConfigurations(subtitleConfigs)
         if (audioUrl != null) {
-            val progressiveFactory = ProgressiveMediaSource.Factory(dataSourceFactory)
-            val videoSource = progressiveFactory.createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
-            val audioSource = progressiveFactory.createMediaSource(MediaItem.fromUri(Uri.parse(audioUrl)))
+            val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItemBuilder.build())
+            val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(MediaItem.fromUri(Uri.parse(audioUrl)))
             exoPlayer.setMediaSource(MergingMediaSource(videoSource, audioSource))
         } else {
-            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl)))
+            exoPlayer.setMediaItem(mediaItemBuilder.build())
         }
 
         exoPlayer.addListener(object : Player.Listener {
@@ -341,67 +393,41 @@ class PlayerActivity : AppCompatActivity() {
                 renderer?.setVideoSize(videoSize.width, videoSize.height)
             }
             override fun onPlayerError(error: PlaybackException) {
-                Log.e(TAG, "播放错误: ${error.message}", error)
-                runOnUiThread {
-                    Toast.makeText(this@PlayerActivity, "播放失败: ${error.message}", Toast.LENGTH_LONG).show()
-                }
+                showToast("播放错误: ${error.message}")
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) {
-                    tvDuration.text = formatTime(exoPlayer.duration)
-                }
+                if (playbackState == Player.STATE_READY) tvDuration.text = formatTime(exoPlayer.duration)
             }
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                updatePlayPauseButton()
+            override fun onIsPlayingChanged(isPlaying: Boolean) { updatePlayPauseButton() }
+            override fun onCues(cueGroup: CueGroup) {
+                subtitleLeft.setCues(cueGroup.cues)
+                subtitleRight.setCues(cueGroup.cues)
             }
         })
 
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
         player = exoPlayer
-
-        // 开始定时更新进度
         handler.post(updateProgressRunnable)
     }
 
-    private fun togglePlayback() {
-        player?.let {
-            it.playWhenReady = !it.playWhenReady
-        }
-    }
-
-    private fun seekRelative(deltaMs: Long) {
-        player?.let {
-            val newPos = (it.currentPosition + deltaMs).coerceIn(0, it.duration)
-            it.seekTo(newPos)
-        }
-    }
-
+    private fun togglePlayback() { player?.let { it.playWhenReady = !it.playWhenReady } }
+    private fun seekRelative(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceIn(0, it.duration)) } }
     private fun updatePlayPauseButton() {
-        val isPlaying = player?.isPlaying == true
-        btnPlayPause.setImageResource(
-            if (isPlaying) android.R.drawable.ic_media_pause
-            else android.R.drawable.ic_media_play
-        )
+        btnPlayPause.setImageResource(if (player?.isPlaying == true) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
     }
 
     private fun updateProgress() {
         if (isSeeking) return
         player?.let {
             if (it.duration > 0) {
-                val progress = (it.currentPosition * 1000 / it.duration).toInt()
-                seekBar.progress = progress
+                seekBar.progress = (it.currentPosition * 1000 / it.duration).toInt()
                 tvCurrentTime.text = formatTime(it.currentPosition)
             }
         }
     }
 
-    // =========== 控件显示/隐藏 ===========
-
-    private fun toggleControls() {
-        if (controlsVisible) hideControls() else showControls()
-    }
-
+    private fun toggleControls() { if (controlsVisible) hideControls() else showControls() }
     private fun showControls() {
         controlsVisible = true
         controlsOverlay.visibility = View.VISIBLE
@@ -424,20 +450,13 @@ class PlayerActivity : AppCompatActivity() {
         handler.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY)
     }
 
-    // =========== 工具方法 ===========
-
     private fun formatTime(ms: Long): String {
-        val totalSec = ms / 1000
-        val h = totalSec / 3600
-        val m = (totalSec % 3600) / 60
-        val s = totalSec % 60
-        return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
-        else String.format("%02d:%02d", m, s)
+        val s = ms / 1000
+        return if (s >= 3600) String.format(Locale.US, "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+        else String.format(Locale.US, "%02d:%02d", s / 60, s % 60)
     }
 
-    private fun showToast(msg: String) {
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-    }
+    private fun showToast(msg: String) { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
     private fun hideSystemUI() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -447,18 +466,105 @@ class PlayerActivity : AppCompatActivity() {
             }
         } else {
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                )
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
         }
     }
 
-    // =========== 生命周期 ===========
+    /**
+     * 将 content:// URI 转换为真实文件路径
+     */
+    private fun getRealPathFromUri(uriString: String): String? {
+        try {
+            Log.d(TAG, "开始转换URI: $uriString")
+            
+            if (uriString.startsWith("file://")) {
+                val path = uriString.substring(7)
+                Log.d(TAG, "file:// URI, 路径: $path")
+                return path
+            }
+            if (uriString.startsWith("/")) {
+                Log.d(TAG, "直接路径: $uriString")
+                return uriString
+            }
+            if (!uriString.startsWith("content://")) {
+                Log.d(TAG, "不是content:// URI")
+                return null
+            }
+
+            val uri = Uri.parse(uriString)
+            Log.d(TAG, "content:// URI, authority: ${uri.authority}")
+            
+            // ExternalStorage Documents Provider (文件管理器选择的文件)
+            if (uri.authority == "com.android.externalstorage.documents") {
+                val docId = DocumentsContract.getDocumentId(uri)
+                Log.d(TAG, "ExternalStorage文档ID: $docId")
+                val split = docId.split(":")
+                if (split.size < 2) {
+                    Log.d(TAG, "文档ID格式错误")
+                    return null
+                }
+                
+                val type = split[0]  // "primary" 或 "home" 等
+                val relativePath = split[1]  // 相对路径
+                
+                // primary 表示主外部存储
+                if (type.equals("primary", ignoreCase = true)) {
+                    val path = "${android.os.Environment.getExternalStorageDirectory()}/$relativePath"
+                    Log.d(TAG, "ExternalStorage路径: $path")
+                    return path
+                }
+            }
+            
+            // MediaStore Documents Provider
+            if (uri.authority == "com.android.providers.media.documents") {
+                val docId = DocumentsContract.getDocumentId(uri)
+                Log.d(TAG, "MediaStore文档ID: $docId")
+                val split = docId.split(":")
+                if (split.size < 2) {
+                    Log.d(TAG, "文档ID格式错误")
+                    return null
+                }
+                
+                val contentUri = when (split[0]) {
+                    "video" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    "audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    "image" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    else -> {
+                        Log.d(TAG, "未知媒体类型: ${split[0]}")
+                        return null
+                    }
+                }
+                
+                val path = getDataColumn(contentUri, "_id=?", arrayOf(split[1]))
+                Log.d(TAG, "通过MediaStore查询到路径: $path")
+                return path
+            }
+            
+            // 直接查询
+            val path = getDataColumn(uri, null, null)
+            Log.d(TAG, "直接查询到路径: $path")
+            return path
+        } catch (e: Exception) {
+            Log.e(TAG, "获取真实路径异常: $uriString", e)
+        }
+        return null
+    }
+
+    private fun getDataColumn(uri: Uri, selection: String?, selectionArgs: Array<String>?): String? {
+        var cursor: Cursor? = null
+        try {
+            cursor = contentResolver.query(uri, arrayOf("_data"), selection, selectionArgs, null)
+            if (cursor?.moveToFirst() == true) {
+                val columnIndex = cursor.getColumnIndexOrThrow("_data")
+                return cursor.getString(columnIndex)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "查询数据列失败", e)
+        } finally {
+            cursor?.close()
+        }
+        return null
+    }
 
     override fun onResume() {
         super.onResume()
