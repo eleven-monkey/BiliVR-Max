@@ -29,6 +29,12 @@ class SBSRenderer(
         private const val TAG = "SBSRenderer"
     }
 
+    /** Viewport 信息，用于同步 View 层字幕定位 */
+    data class ViewportInfo(
+        val leftX: Int, val rightX: Int,
+        val vpW: Int, val vpH: Int, val vpY: Int
+    )
+
     // ===== 视频纹理 =====
     private var videoTextureId = 0
     private var surfaceTexture: SurfaceTexture? = null
@@ -54,6 +60,12 @@ class SBSRenderer(
     @Volatile private var displayScale = 0.85f
     @Volatile private var displayGap = 0
 
+    @Volatile private var viewportListener: ((ViewportInfo) -> Unit)? = null
+
+    fun setOnViewportChangedListener(listener: ((ViewportInfo) -> Unit)?) {
+        viewportListener = listener
+    }
+
     // ===== 畸变参数 =====
     @Volatile private var distortionK1 = 0.0f
     @Volatile private var distortionK2 = 0.0f
@@ -61,7 +73,21 @@ class SBSRenderer(
     fun setDisplayParams(scale: Int, gap: Int) {
         displayScale = scale / 100f
         displayGap = gap
+        notifyViewportChanged()
         requestRender()
+    }
+
+    private fun notifyViewportChanged() {
+        if (screenWidth <= 0 || screenHeight <= 0) return
+        val halfWidth = screenWidth / 2
+        val scale = displayScale
+        val gap = displayGap
+        val vpW = (halfWidth * scale).toInt()
+        val vpH = (screenHeight * scale).toInt()
+        val vpY = (screenHeight - vpH) / 2
+        val leftX = (halfWidth - vpW) / 2 - gap / 2
+        val rightX = halfWidth + (halfWidth - vpW) / 2 + gap / 2
+        viewportListener?.invoke(ViewportInfo(leftX, rightX, vpW, vpH, vpY))
     }
 
     fun setDistortion(k1: Float, k2: Float) {
@@ -239,6 +265,7 @@ class SBSRenderer(
         screenHeight = height
         setupFBO(width / 2, height)  // FBO 大小 = 每只眼睛的半屏
         recalcVertices()
+        notifyViewportChanged()
     }
 
     override fun onDrawFrame(gl: GL10?) {

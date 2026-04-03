@@ -4,30 +4,28 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- 左右双目的字幕渲染容器 - 移动到最上层确保不被背景遮挡 -->
-    <LinearLayout
+    <!-- 左右双目的字幕渲染容器 - FrameLayout 以便精确定位 -->
+    <FrameLayout
         android:id="@+id/subtitleContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:baselineAligned="false"
-        android:orientation="horizontal"
         android:clickable="false"
         android:focusable="false"
-        android:elevation="1dp"
-        android:paddingBottom="40dp">
+        android:clipChildren="false"
+        android:elevation="1dp">
 
         <androidx.media3.ui.SubtitleView
             android:id="@+id/subtitleLeft"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1" />
+            android:layout_height="0dp"
+            android:layout_gravity="start|top" />
 
         <androidx.media3.ui.SubtitleView
             android:id="@+id/subtitleRight"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1" />
-    </LinearLayout>
+            android:layout_height="0dp"
+            android:layout_gravity="start|top" />
+    </FrameLayout>
 
     <!-- 控件覆盖层 -->
     <LinearLayout
@@ -190,7 +188,10 @@
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#40FFFFFF" android:layout_marginBottom="12dp" />
 
             <TextView android:id="@+id/tvSubtitleDepthLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="字幕立体深度" android:textColor="#CCFFFFFF" android:textSize="13sp" />
-            <SeekBar android:id="@+id/seekSubtitleDepth" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" android:progress="15" android:layout_marginBottom="16dp" />
+            <SeekBar android:id="@+id/seekSubtitleDepth" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" android:progress="15" android:layout_marginBottom="12dp" />
+
+            <TextView android:id="@+id/tvSubtitleSizeLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="字幕大小" android:textColor="#CCFFFFFF" android:textSize="13sp" />
+            <SeekBar android:id="@+id/seekSubtitleSize" android:layout_width="match_parent" android:layout_height="wrap_content" android:min="20" android:max="100" android:progress="40" android:layout_marginBottom="16dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnToggleSubtitle"

@@ -83,6 +83,14 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var subtitleLeft: SubtitleView
     private lateinit var subtitleRight: SubtitleView
     private lateinit var btnToggleSubtitle: View
+    private lateinit var seekSubtitleSize: SeekBar
+    private lateinit var tvSubtitleSizeLabel: TextView
+
+    // Viewport 跟踪，用于字幕精确定位
+    private var lastViewportInfo: SBSRenderer.ViewportInfo? = null
+    private var subtitleLeftBaseX = 0f
+    private var subtitleRightBaseX = 0f
+    private var subtitleBaseY = 0f
 
     private lateinit var vrSettings: VRSettings
     private val handler = Handler(Looper.getMainLooper())
@@ -118,6 +126,10 @@ class PlayerActivity : AppCompatActivity() {
             },
             requestRender = { glSurfaceView.requestRender() }
         )
+
+        renderer?.setOnViewportChangedListener { info ->
+            runOnUiThread { updateSubtitleLayout(info) }
+        }
 
         glSurfaceView.setRenderer(renderer)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -189,6 +201,8 @@ class PlayerActivity : AppCompatActivity() {
         subtitleLeft = findViewById(R.id.subtitleLeft)
         subtitleRight = findViewById(R.id.subtitleRight)
         btnToggleSubtitle = findViewById(R.id.btnToggleSubtitle)
+        seekSubtitleSize = findViewById(R.id.seekSubtitleSize)
+        tvSubtitleSizeLabel = findViewById(R.id.tvSubtitleSizeLabel)
 
         val captionStyle = CaptionStyleCompat(
             android.graphics.Color.WHITE,
@@ -200,8 +214,8 @@ class PlayerActivity : AppCompatActivity() {
         )
         listOf(subtitleLeft, subtitleRight).forEach {
             it.setStyle(captionStyle)
-            it.setFractionalTextSize(0.06f)
-            it.setApplyEmbeddedStyles(true) 
+            it.setFractionalTextSize(vrSettings.subtitleSize / 1000f)
+            it.setApplyEmbeddedStyles(true)
         }
 
         tvTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: "视频播放中"
@@ -273,6 +287,12 @@ class PlayerActivity : AppCompatActivity() {
             tvSubtitleDepthLabel.text = "字幕立体深度: $progress"
         })
 
+        seekSubtitleSize.setOnSeekBarChangeListener(createVRSeekListener { progress ->
+            vrSettings.subtitleSize = progress
+            applySubtitleSize(progress)
+            tvSubtitleSizeLabel.text = "字幕大小: ${String.format(Locale.US, "%.1f%%", progress / 10f)}"
+        })
+
         btnToggleSubtitle.setOnClickListener {
             player?.let { p ->
                 val params = p.trackSelectionParameters
@@ -295,8 +315,33 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun applySubtitleDepth(depth: Int) {
-        subtitleLeft.translationX = depth.toFloat()
-        subtitleRight.translationX = -depth.toFloat()
+        val vpW = lastViewportInfo?.vpW ?: return
+        // 深度偏移：最大为 viewport 宽度的 5%，产生立体出屏效果
+        val shiftPx = depth.toFloat() / VRSettings.SUBTITLE_DEPTH_MAX * vpW * 0.05f
+        subtitleLeft.translationX = subtitleLeftBaseX + shiftPx
+        subtitleLeft.translationY = subtitleBaseY
+        subtitleRight.translationX = subtitleRightBaseX - shiftPx
+        subtitleRight.translationY = subtitleBaseY
+    }
+
+    private fun applySubtitleSize(size: Int) {
+        val fractionalSize = size / 1000f
+        listOf(subtitleLeft, subtitleRight).forEach {
+            it.setFractionalTextSize(fractionalSize)
+        }
+    }
+
+    private fun updateSubtitleLayout(info: SBSRenderer.ViewportInfo) {
+        lastViewportInfo = info
+        // 设置字幕视图大小精确匹配 GL viewport
+        subtitleLeft.layoutParams = FrameLayout.LayoutParams(info.vpW, info.vpH)
+        subtitleRight.layoutParams = FrameLayout.LayoutParams(info.vpW, info.vpH)
+        // 记录基准位置
+        subtitleLeftBaseX = info.leftX.toFloat()
+        subtitleRightBaseX = info.rightX.toFloat()
+        subtitleBaseY = info.vpY.toFloat()
+        // 应用深度偏移（内含位置更新）
+        applySubtitleDepth(vrSettings.subtitleDepth)
     }
 
     private fun applyVRSettings() {
@@ -306,6 +351,7 @@ class PlayerActivity : AppCompatActivity() {
         val k2 = vrSettings.distortionK2
         val sbs3d = vrSettings.sbs3dMode
         val subDepth = vrSettings.subtitleDepth
+        val subSize = vrSettings.subtitleSize
 
         seekScale.progress = scale
         seekGap.progress = gap + 600
@@ -313,17 +359,20 @@ class PlayerActivity : AppCompatActivity() {
         seekK2.progress = k2
         switchSBS3D.isChecked = sbs3d
         seekSubtitleDepth.progress = subDepth
+        seekSubtitleSize.progress = subSize
 
         tvScaleLabel.text = "画面大小: $scale%"
         tvGapLabel.text = "双屏间距: $gap"
         tvK1Label.text = "畸变矫正 K1: ${String.format(Locale.US, "%.2f", k1 / 100f)}"
         tvK2Label.text = "畸变矫正 K2: ${String.format(Locale.US, "%.2f", k2 / 100f)}"
         tvSubtitleDepthLabel.text = "字幕立体深度: $subDepth"
+        tvSubtitleSizeLabel.text = "字幕大小: ${String.format(Locale.US, "%.1f%%", subSize / 10f)}"
 
         renderer?.setDisplayParams(scale, gap)
         renderer?.setDistortion(k1 / 100f, k2 / 100f)
         renderer?.setSBS3DMode(sbs3d)
         applySubtitleDepth(subDepth)
+        applySubtitleSize(subSize)
     }
 
     private fun initPlayer(surface: Surface) {

@@ -36,6 +36,11 @@ class VRSettings(context: Context) {
         const val SUBTITLE_DEPTH_MIN = 0
         const val SUBTITLE_DEPTH_MAX = 100
         const val SUBTITLE_DEPTH_DEFAULT = 15
+
+        private const val KEY_SUBTITLE_SIZE = "subtitle_size"
+        const val SUBTITLE_SIZE_MIN = 20
+        const val SUBTITLE_SIZE_MAX = 100
+        const val SUBTITLE_SIZE_DEFAULT = 40
     }
 
     private val prefs: SharedPreferences =
@@ -70,4 +75,9 @@ class VRSettings(context: Context) {
     var subtitleDepth: Int
         get() = prefs.getInt(KEY_SUBTITLE_DEPTH, SUBTITLE_DEPTH_DEFAULT)
         set(value) = prefs.edit().putInt(KEY_SUBTITLE_DEPTH, value.coerceIn(SUBTITLE_DEPTH_MIN, SUBTITLE_DEPTH_MAX)).apply()
+
+    /** 字幕大小（整数 20~100，实际使用时除以 1000，即 0.02~0.10 的比例） */
+    var subtitleSize: Int
+        get() = prefs.getInt(KEY_SUBTITLE_SIZE, SUBTITLE_SIZE_DEFAULT)
+        set(value) = prefs.edit().putInt(KEY_SUBTITLE_SIZE, value.coerceIn(SUBTITLE_SIZE_MIN, SUBTITLE_SIZE_MAX)).apply()
 }
