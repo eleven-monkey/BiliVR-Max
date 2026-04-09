@@ -55,6 +55,7 @@ class PlayerActivity : AppCompatActivity() {
         private const val TAG = "PlayerActivity"
         private const val CONTROLS_HIDE_DELAY = 4000L
         private const val SEEK_INCREMENT_MS = 10000L
+        private const val SUBTITLE_BOTTOM_PADDING_FRACTION = 0.18f
     }
 
     private lateinit var glSurfaceView: GLSurfaceView
@@ -215,6 +216,7 @@ class PlayerActivity : AppCompatActivity() {
         listOf(subtitleLeft, subtitleRight).forEach {
             it.setStyle(captionStyle)
             it.setFractionalTextSize(vrSettings.subtitleSize / 1000f)
+            it.setBottomPaddingFraction(SUBTITLE_BOTTOM_PADDING_FRACTION)
             it.setApplyEmbeddedStyles(true)
         }
 
