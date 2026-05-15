@@ -95,7 +95,9 @@ class BilibiliParser {
         Log.d(TAG, "提取到 BVid: $bvid")
 
         // 2. 从 URL 提取分P编号（?p=8 → 8，默认 1）
-        val pageIndex = Uri.parse(url).getQueryParameter("p")?.toIntOrNull() ?: 1
+        val pageIndex = Uri.parse(realUrl).getQueryParameter("p")?.toIntOrNull()
+            ?: Uri.parse(extractedUrl).getQueryParameter("p")?.toIntOrNull()
+            ?: 1
         Log.d(TAG, "目标分P: P$pageIndex")
 
         // 3. 获取视频基本信息（title + pages 数组）
@@ -161,6 +163,7 @@ class BilibiliParser {
             title = fullTitle,
             bvid = bvid,
             cid = cid,
+            sourceUrl = buildSourceUrl(bvid, pageIndex),
             videoUrl = videoStreamUrl,
             audioUrl = audioStreamUrl,
             quality = videoQuality,
@@ -215,6 +218,14 @@ class BilibiliParser {
             Log.w(TAG, "解析短链接失败: ${e.message}")
         }
         return originalUrl
+    }
+
+    private fun buildSourceUrl(bvid: String, pageIndex: Int): String {
+        return if (pageIndex > 1) {
+            "https://www.bilibili.com/video/$bvid?p=$pageIndex"
+        } else {
+            "https://www.bilibili.com/video/$bvid"
+        }
     }
 
     /**

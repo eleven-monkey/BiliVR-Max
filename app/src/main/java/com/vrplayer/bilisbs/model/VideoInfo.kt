@@ -7,6 +7,7 @@ data class VideoInfo(
     val title: String,
     val bvid: String,
     val cid: Long,
+    val sourceUrl: String,  // 原始 B 站页面链接，用于历史记录重新解析
     val videoUrl: String,   // DASH 视频流地址
     val audioUrl: String?,  // DASH 音频流地址（可能为空）
     val quality: Int,       // 清晰度 (64=720P, 80=1080P, ...)

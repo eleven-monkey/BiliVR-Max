@@ -51,6 +51,7 @@ class PlayerActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_VIDEO_URL = "video_url"
         const val EXTRA_AUDIO_URL = "audio_url"
+        const val EXTRA_SOURCE_URL = "source_url"
         const val EXTRA_TITLE = "title"
         const val EXTRA_MODE = "mode"
         const val EXTRA_START_POSITION_MS = "start_position_ms"
@@ -91,6 +92,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnToggleSubtitle: View
     private lateinit var seekSubtitleSize: SeekBar
     private lateinit var tvSubtitleSizeLabel: TextView
+    private var normalSwitchButton: ImageButton? = null
 
     private var lastViewportInfo: SBSRenderer.ViewportInfo? = null
     private var subtitleLeftBaseX = 0f
@@ -100,9 +102,11 @@ class PlayerActivity : AppCompatActivity() {
     private var isSeeking = false
     private var mode = MODE_VR
     private var historySavedPositionMs = -1L
+    private var requestedPlayWhenReady = true
 
     private val handler = Handler(Looper.getMainLooper())
     private val hideControlsRunnable = Runnable { hideControls() }
+    private val hideNormalSwitchRunnable = Runnable { normalSwitchButton?.visibility = View.GONE }
     private val updateProgressRunnable = object : Runnable {
         override fun run() {
             updateProgress()
@@ -133,7 +137,33 @@ class PlayerActivity : AppCompatActivity() {
             keepScreenOn = true
         }
         normalPlayerView = playerView
-        setContentView(playerView)
+        val rootLayout = FrameLayout(this)
+        rootLayout.addView(
+            playerView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        val switchButton = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_rotate)
+            contentDescription = "切换普通/VR模式"
+            setColorFilter(android.graphics.Color.WHITE)
+            background = null
+            visibility = View.GONE
+            setOnClickListener { switchPlaybackMode(MODE_VR) }
+        }
+        normalSwitchButton = switchButton
+        val switchButtonSize = resources.displayMetrics.density.times(48).toInt()
+        val switchButtonParams = FrameLayout.LayoutParams(switchButtonSize, switchButtonSize).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            topMargin = resources.displayMetrics.density.times(16).toInt()
+            rightMargin = resources.displayMetrics.density.times(16).toInt()
+        }
+        rootLayout.addView(switchButton, switchButtonParams)
+        rootLayout.setOnClickListener { showNormalSwitchButton() }
+        playerView.setOnClickListener { showNormalSwitchButton() }
+        setContentView(rootLayout)
 
         val exoPlayer = buildPlayer()
         playerView.player = exoPlayer
@@ -142,17 +172,24 @@ class PlayerActivity : AppCompatActivity() {
         exoPlayer.addListener(commonPlayerListener(exoPlayer))
         exoPlayer.prepare()
         seekToStartPosition(exoPlayer)
-        exoPlayer.playWhenReady = true
+        exoPlayer.playWhenReady = requestedPlayWhenReady
         handler.post(updateProgressRunnable)
     }
 
     private fun setupVrPlayer() {
         val rootLayout = FrameLayout(this)
         glSurfaceView = GLSurfaceView(this).apply { setEGLContextClientVersion(2) }
-        renderer = SBSRenderer(
-            onSurfaceReady = { surface -> runOnUiThread { initVrPlayer(surface) } },
+        var createdRenderer: SBSRenderer? = null
+        val newRenderer = SBSRenderer(
+            onSurfaceReady = { surface ->
+                runOnUiThread {
+                    if (mode == MODE_VR && renderer === createdRenderer) initVrPlayer(surface)
+                }
+            },
             requestRender = { glSurfaceView.requestRender() }
         )
+        createdRenderer = newRenderer
+        renderer = newRenderer
         renderer?.setOnViewportChangedListener { info -> runOnUiThread { updateSubtitleLayout(info) } }
         glSurfaceView.setRenderer(renderer)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -240,6 +277,9 @@ class PlayerActivity : AppCompatActivity() {
         btnPlayPause.setOnClickListener {
             togglePlayback()
             resetAutoHide()
+        }
+        findViewById<ImageButton>(R.id.btnSwitchMode).setOnClickListener {
+            switchPlaybackMode(MODE_NORMAL)
         }
         findViewById<ImageButton>(R.id.btnSettings).setOnClickListener {
             settingsPanel.visibility = if (settingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -355,7 +395,7 @@ class PlayerActivity : AppCompatActivity() {
         exoPlayer.addListener(commonPlayerListener(exoPlayer, vrMode = true))
         exoPlayer.prepare()
         seekToStartPosition(exoPlayer)
-        exoPlayer.playWhenReady = true
+        exoPlayer.playWhenReady = requestedPlayWhenReady
         player = exoPlayer
         handler.post(updateProgressRunnable)
     }
@@ -435,6 +475,45 @@ class PlayerActivity : AppCompatActivity() {
         if (startPositionMs > 0L) exoPlayer.seekTo(startPositionMs)
     }
 
+    private fun switchPlaybackMode(targetMode: String) {
+        if (targetMode == mode) return
+        val currentPlayer = player
+        val startPositionMs = currentPlayer?.currentPosition?.coerceAtLeast(0L)
+            ?: intent.getLongExtra(EXTRA_START_POSITION_MS, 0L)
+        requestedPlayWhenReady = currentPlayer?.playWhenReady ?: true
+        savePlaybackHistory(force = true)
+        releaseCurrentPlayback()
+        mode = targetMode
+        intent.putExtra(EXTRA_MODE, targetMode)
+        intent.putExtra(EXTRA_START_POSITION_MS, startPositionMs)
+        controlsVisible = false
+        isSeeking = false
+        if (targetMode == MODE_NORMAL) {
+            setupNormalPlayer()
+        } else {
+            setupVrPlayer()
+        }
+        showToast(if (targetMode == MODE_NORMAL) "已切换到普通模式" else "已切换到 SBS VR 模式")
+    }
+
+    private fun releaseCurrentPlayback() {
+        handler.removeCallbacks(updateProgressRunnable)
+        handler.removeCallbacks(hideControlsRunnable)
+        handler.removeCallbacks(hideNormalSwitchRunnable)
+        normalPlayerView?.player = null
+        normalPlayerView = null
+        normalSwitchButton = null
+        player?.clearVideoSurface()
+        player?.release()
+        player = null
+        if (mode == MODE_VR && ::glSurfaceView.isInitialized) {
+            glSurfaceView.onPause()
+        }
+        renderer?.release()
+        renderer = null
+        lastViewportInfo = null
+    }
+
     private fun applySubtitleDepth(depth: Int) {
         val vpW = lastViewportInfo?.vpW ?: return
         val shiftPx = depth.toFloat() / VRSettings.SUBTITLE_DEPTH_MAX * vpW * 0.05f
@@ -492,6 +571,7 @@ class PlayerActivity : AppCompatActivity() {
             PlaybackHistoryItem(
                 videoUrl = videoUrl,
                 audioUrl = intent.getStringExtra(EXTRA_AUDIO_URL),
+                sourceUrl = intent.getStringExtra(EXTRA_SOURCE_URL),
                 title = intent.getStringExtra(EXTRA_TITLE),
                 positionMs = position,
                 durationMs = p.duration.takeIf { it > 0L } ?: 0L
@@ -517,6 +597,13 @@ class PlayerActivity : AppCompatActivity() {
             settingsPanel.visibility = View.GONE
         }.start()
         controlsVisible = false
+    }
+
+    private fun showNormalSwitchButton() {
+        if (mode != MODE_NORMAL) return
+        normalSwitchButton?.visibility = View.VISIBLE
+        handler.removeCallbacks(hideNormalSwitchRunnable)
+        handler.postDelayed(hideNormalSwitchRunnable, CONTROLS_HIDE_DELAY)
     }
 
     private fun resetAutoHide() {
@@ -618,10 +705,6 @@ class PlayerActivity : AppCompatActivity() {
         savePlaybackHistory(force = true)
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
-        normalPlayerView?.player = null
-        player?.release()
-        player = null
-        renderer?.release()
-        renderer = null
+        releaseCurrentPlayback()
     }
 }

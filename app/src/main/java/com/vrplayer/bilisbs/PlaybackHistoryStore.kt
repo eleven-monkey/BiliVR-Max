@@ -7,6 +7,7 @@ import com.google.gson.reflect.TypeToken
 data class PlaybackHistoryItem(
     val videoUrl: String,
     val audioUrl: String? = null,
+    val sourceUrl: String? = null,
     val title: String? = null,
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
@@ -32,7 +33,7 @@ class PlaybackHistoryStore(context: Context) {
     }
 
     fun find(videoUrl: String): PlaybackHistoryItem? {
-        return getAll().firstOrNull { it.videoUrl == videoUrl }
+        return getAll().firstOrNull { it.videoUrl == videoUrl || it.sourceUrl == videoUrl }
     }
 
     fun upsert(item: PlaybackHistoryItem) {
@@ -42,7 +43,8 @@ class PlaybackHistoryStore(context: Context) {
             item.positionMs.coerceAtLeast(0L)
         }
         val normalized = item.copy(positionMs = normalizedPosition, updatedAtMs = System.currentTimeMillis())
-        val items = (listOf(normalized) + getAll().filterNot { it.videoUrl == item.videoUrl })
+        val itemKey = item.sourceUrl ?: item.videoUrl
+        val items = (listOf(normalized) + getAll().filterNot { (it.sourceUrl ?: it.videoUrl) == itemKey })
             .take(MAX_ITEMS)
         prefs.edit().putString(KEY_ITEMS, gson.toJson(items)).apply()
     }

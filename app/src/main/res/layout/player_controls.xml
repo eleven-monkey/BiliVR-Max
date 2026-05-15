@@ -38,7 +38,7 @@
         android:elevation="2dp"
         android:padding="16dp">
 
-        <!-- 顶部：标题 + 设置按钮 -->
+        <!-- 顶部：标题 + 模式/设置按钮 -->
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -49,13 +49,24 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_alignParentStart="true"
-                android:layout_toStartOf="@+id/btnSettings"
+                android:layout_toStartOf="@+id/btnSwitchMode"
                 android:text=""
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:maxLines="1"
                 android:ellipsize="end" />
+
+            <ImageButton
+                android:id="@+id/btnSwitchMode"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_toStartOf="@+id/btnSettings"
+                android:layout_centerVertical="true"
+                android:src="@android:drawable/ic_menu_rotate"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="切换普通/VR模式"
+                android:tint="#FFFFFF" />
 
             <ImageButton
                 android:id="@+id/btnSettings"

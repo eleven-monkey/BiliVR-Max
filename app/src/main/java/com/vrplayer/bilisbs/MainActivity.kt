@@ -136,7 +136,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun parseBilibiliAndPlay(url: String, mode: String) {
+    private fun parseBilibiliAndPlay(url: String, mode: String, startPositionOverrideMs: Long? = null) {
         setLoading(true, "正在解析 B 站视频...")
         Thread {
             try {
@@ -147,13 +147,14 @@ class MainActivity : AppCompatActivity() {
                     setLoading(false)
                     Log.d(TAG, "解析成功: ${videoInfo.title} [${videoInfo.qualityDesc}]")
                     Toast.makeText(this, "${videoInfo.title}\n${videoInfo.qualityDesc}", Toast.LENGTH_SHORT).show()
-                    val history = historyStore.find(videoInfo.videoUrl)
+                    val history = historyStore.find(videoInfo.sourceUrl)
                     launchPlayer(
                         videoUrl = videoInfo.videoUrl,
                         audioUrl = videoInfo.audioUrl,
+                        sourceUrl = videoInfo.sourceUrl,
                         title = videoInfo.title,
                         mode = mode,
-                        startPositionMs = history?.positionMs ?: 0L
+                        startPositionMs = startPositionOverrideMs ?: history?.positionMs ?: 0L
                     )
                 }
             } catch (e: Exception) {
@@ -169,6 +170,7 @@ class MainActivity : AppCompatActivity() {
     private fun launchPlayer(
         videoUrl: String,
         audioUrl: String? = null,
+        sourceUrl: String? = null,
         title: String? = null,
         mode: String,
         startPositionMs: Long = 0L
@@ -178,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         intent.putExtra(PlayerActivity.EXTRA_MODE, mode)
         intent.putExtra(PlayerActivity.EXTRA_START_POSITION_MS, startPositionMs)
         audioUrl?.let { intent.putExtra(PlayerActivity.EXTRA_AUDIO_URL, it) }
+        sourceUrl?.let { intent.putExtra(PlayerActivity.EXTRA_SOURCE_URL, it) }
         title?.let { intent.putExtra(PlayerActivity.EXTRA_TITLE, it) }
         startActivity(intent)
     }
@@ -193,16 +196,36 @@ class MainActivity : AppCompatActivity() {
             row.findViewById<TextView>(R.id.historyItemTitle).text = item.title?.takeIf { it.isNotBlank() } ?: "未命名视频"
             row.findViewById<TextView>(R.id.historyItemMeta).text = buildHistoryMeta(item)
             row.findViewById<MaterialButton>(R.id.btnHistoryResume).setOnClickListener {
-                launchPlayer(item.videoUrl, item.audioUrl, item.title, PlayerActivity.MODE_VR, item.positionMs)
+                playHistoryItem(item, item.positionMs)
             }
             row.findViewById<MaterialButton>(R.id.btnHistoryReplay).setOnClickListener {
-                launchPlayer(item.videoUrl, item.audioUrl, item.title, PlayerActivity.MODE_VR, 0L)
+                playHistoryItem(item, 0L)
             }
             row.setOnClickListener {
-                launchPlayer(item.videoUrl, item.audioUrl, item.title, PlayerActivity.MODE_VR, item.positionMs)
+                playHistoryItem(item, item.positionMs)
             }
             historyList.addView(row)
         }
+    }
+
+    private fun playHistoryItem(item: PlaybackHistoryItem, startPositionMs: Long) {
+        val sourceUrl = item.sourceUrl
+        if (!sourceUrl.isNullOrBlank() && BilibiliParser.isBilibiliUrl(sourceUrl)) {
+            parseBilibiliAndPlay(sourceUrl, PlayerActivity.MODE_VR, startPositionMs)
+            return
+        }
+        if (sourceUrl.isNullOrBlank() && item.audioUrl != null) {
+            Toast.makeText(this, "旧历史记录缺少 B 站原始链接，请重新粘贴链接播放一次", Toast.LENGTH_LONG).show()
+            return
+        }
+        launchPlayer(
+            videoUrl = item.videoUrl,
+            audioUrl = item.audioUrl,
+            sourceUrl = sourceUrl,
+            title = item.title,
+            mode = PlayerActivity.MODE_VR,
+            startPositionMs = startPositionMs
+        )
     }
 
     private fun buildHistoryMeta(item: PlaybackHistoryItem): String {
