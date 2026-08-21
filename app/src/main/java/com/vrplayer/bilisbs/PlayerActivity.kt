@@ -164,15 +164,6 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun singleTapConfirmed(e: MotionEvent): Boolean {
-                if (settingsPanel.visibility == View.VISIBLE) {
-                    settingsPanel.visibility = View.GONE
-                    return true
-                }
-                toggleControls()
-                return true
-            }
-
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (settingsPanel.visibility == View.VISIBLE) {
                     settingsPanel.visibility = View.GONE
@@ -654,13 +645,6 @@ class PlayerActivity : AppCompatActivity() {
             settingsPanel.visibility = View.GONE
         }.start()
         controlsVisible = false
-    }
-
-    private fun showNormalSwitchButton() {
-        if (mode != MODE_NORMAL) return
-        normalSwitchButton?.visibility = View.VISIBLE
-        handler.removeCallbacks(hideNormalSwitchRunnable)
-        handler.postDelayed(hideNormalSwitchRunnable, CONTROLS_HIDE_DELAY)
     }
 
     private fun resetAutoHide() {
