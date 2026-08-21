@@ -164,8 +164,9 @@
                 android:textStyle="bold"
                 android:layout_marginBottom="12dp" />
 
-            <!-- SBS 3D 模式切换 -->
+            <!-- SBS 3D 模式切换 (双目 VR 模式使用) -->
             <LinearLayout
+                android:id="@+id/layoutSbs3dVR"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
@@ -175,13 +176,79 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="SBS 3D 视频模式"
+                    android:text="SBS 3D 视频模式 (双目)"
                     android:textColor="#CCFFFFFF"
                     android:textSize="14sp" />
                 <androidx.appcompat.widget.SwitchCompat
                     android:id="@+id/switchSBS3D"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <!-- 普通模式下的 SBS 提取设置 -->
+            <LinearLayout
+                android:id="@+id/layoutNormalSbsSettings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:layout_marginBottom="12dp">
+                
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="SBS 转普通 2D 播放"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="14sp" />
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchNormalSBS"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/layoutNormalSbsEye"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="提取画面"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="13sp" />
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/toggleEyeGroup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnEyeLeft"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:textSize="12sp"
+                            android:text="左眼"
+                            style="?attr/materialButtonOutlinedStyle" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnEyeRight"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:textSize="12sp"
+                            android:text="右眼"
+                            style="?attr/materialButtonOutlinedStyle" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+                </LinearLayout>
             </LinearLayout>
 
             <TextView android:id="@+id/tvScaleLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="画面大小" android:textColor="#CCFFFFFF" android:textSize="13sp" />

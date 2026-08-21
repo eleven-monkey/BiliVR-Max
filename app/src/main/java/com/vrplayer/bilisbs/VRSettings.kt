@@ -14,6 +14,11 @@ class VRSettings(context: Context) {
         private const val KEY_SCREEN_SCALE = "screen_scale"
         private const val KEY_SCREEN_GAP = "screen_gap"
         private const val KEY_SBS3D_MODE = "sbs3d_mode"
+        private const val KEY_NORMAL_SBS_MODE = "normal_sbs_mode"
+        private const val KEY_NORMAL_SBS_EYE = "normal_sbs_eye"
+
+        const val EYE_LEFT = 0
+        const val EYE_RIGHT = 1
 
         const val SCALE_MIN = 50
         const val SCALE_MAX = 100
@@ -70,6 +75,16 @@ class VRSettings(context: Context) {
     var sbs3dMode: Boolean
         get() = prefs.getBoolean(KEY_SBS3D_MODE, false)
         set(value) = prefs.edit().putBoolean(KEY_SBS3D_MODE, value).apply()
+
+    /** 普通全屏播放模式下：是否开启 SBS 提取单眼画面当普通视频播放 */
+    var normalSbsMode: Boolean
+        get() = prefs.getBoolean(KEY_NORMAL_SBS_MODE, false)
+        set(value) = prefs.edit().putBoolean(KEY_NORMAL_SBS_MODE, value).apply()
+
+    /** 普通全屏播放模式下：提取单眼画面所选眼睛（0: 左眼, 1: 右眼） */
+    var normalSbsEye: Int
+        get() = prefs.getInt(KEY_NORMAL_SBS_EYE, EYE_LEFT)
+        set(value) = prefs.edit().putInt(KEY_NORMAL_SBS_EYE, value).apply()
 
     /** 字幕深度（正值表示往内靠拢，立体出屏偏移量） */
     var subtitleDepth: Int

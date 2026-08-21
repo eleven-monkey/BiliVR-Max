@@ -79,15 +79,20 @@ class SBSRenderer(
 
     private fun notifyViewportChanged() {
         if (screenWidth <= 0 || screenHeight <= 0) return
-        val halfWidth = screenWidth / 2
-        val scale = displayScale
-        val gap = displayGap
-        val vpW = (halfWidth * scale).toInt()
-        val vpH = (screenHeight * scale).toInt()
-        val vpY = (screenHeight - vpH) / 2
-        val leftX = (halfWidth - vpW) / 2 - gap / 2
-        val rightX = halfWidth + (halfWidth - vpW) / 2 + gap / 2
-        viewportListener?.invoke(ViewportInfo(leftX, rightX, vpW, vpH, vpY))
+        if (renderMode == RenderMode.SINGLE_SCREEN) {
+            // 单屏普通模式：铺满全屏，字幕居中全宽
+            viewportListener?.invoke(ViewportInfo(0, 0, screenWidth, screenHeight, 0))
+        } else {
+            val halfWidth = screenWidth / 2
+            val scale = displayScale
+            val gap = displayGap
+            val vpW = (halfWidth * scale).toInt()
+            val vpH = (screenHeight * scale).toInt()
+            val vpY = (screenHeight - vpH) / 2
+            val leftX = (halfWidth - vpW) / 2 - gap / 2
+            val rightX = halfWidth + (halfWidth - vpW) / 2 + gap / 2
+            viewportListener?.invoke(ViewportInfo(leftX, rightX, vpW, vpH, vpY))
+        }
     }
 
     fun setDistortion(k1: Float, k2: Float) {
@@ -96,11 +101,31 @@ class SBSRenderer(
         requestRender()
     }
 
+    enum class RenderMode {
+        DUAL_VR,       // 双目 VR 模式
+        SINGLE_SCREEN  // 单屏普通播放模式
+    }
+
     // SBS 3D 模式（视频本身是左右分屏的）
     @Volatile private var sbs3dMode = false
+    @Volatile private var renderMode = RenderMode.DUAL_VR
+    @Volatile private var singleEye = 0 // 0: 左眼, 1: 右眼
+
+    fun setRenderMode(mode: RenderMode) {
+        renderMode = mode
+        recalcVertices()
+        notifyViewportChanged()
+        requestRender()
+    }
 
     fun setSBS3DMode(enabled: Boolean) {
         sbs3dMode = enabled
+        recalcVertices()
+        requestRender()
+    }
+
+    fun setSingleEye(eye: Int) {
+        singleEye = eye
         requestRender()
     }
 
@@ -286,6 +311,22 @@ class SBSRenderer(
 
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
+        val isSBS3D = sbs3dMode
+
+        if (renderMode == RenderMode.SINGLE_SCREEN) {
+            // ===== 单屏普通播放模式（无 VR 畸变/双屏） =====
+            val texBuf = if (isSBS3D) {
+                if (singleEye == 1) texCoordRightBuffer else texCoordLeftBuffer
+            } else {
+                texCoordBuffer
+            }
+            drawVideoPass(texBuf)
+            GLES20.glViewport(0, 0, screenWidth, screenHeight)
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            cleanupVideoPass()
+            return
+        }
+
         val halfWidth = screenWidth / 2
         val scale = displayScale
         val gap = displayGap
@@ -297,7 +338,6 @@ class SBSRenderer(
         val vpY = (screenHeight - vpH) / 2
 
         val useDistortion = (k1 != 0.0f || k2 != 0.0f)
-        val isSBS3D = sbs3dMode
 
         if (!useDistortion) {
             // ===== 无畸变：直接渲染到屏幕 =====
@@ -477,9 +517,11 @@ class SBSRenderer(
         synchronized(this) {
             if (videoWidth <= 0 || videoHeight <= 0 || screenWidth <= 0 || screenHeight <= 0) return
 
-            val halfViewportW = screenWidth / 2f
-            val halfViewportH = screenHeight.toFloat()
-            val viewportAR = halfViewportW / halfViewportH
+            val viewportAR = if (renderMode == RenderMode.SINGLE_SCREEN) {
+                screenWidth.toFloat() / screenHeight.toFloat()
+            } else {
+                (screenWidth / 2f) / screenHeight.toFloat()
+            }
             
             // 视频本身的真实比例
             val rawVideoAR = videoWidth.toFloat() / videoHeight

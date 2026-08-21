@@ -64,7 +64,6 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private lateinit var glSurfaceView: GLSurfaceView
-    private var normalPlayerView: PlayerView? = null
     private var player: ExoPlayer? = null
     private var renderer: SBSRenderer? = null
     private lateinit var historyStore: PlaybackHistoryStore
@@ -74,6 +73,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var settingsPanel: View
     private lateinit var tvTitle: TextView
     private lateinit var btnPlayPause: ImageButton
+    private lateinit var btnSwitchMode: ImageButton
     private lateinit var seekBar: SeekBar
     private lateinit var tvCurrentTime: TextView
     private lateinit var tvDuration: TextView
@@ -86,6 +86,13 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var seekK1: SeekBar
     private lateinit var seekK2: SeekBar
     private lateinit var switchSBS3D: SwitchCompat
+    private lateinit var layoutSbs3dVR: View
+    private lateinit var layoutNormalSbsSettings: View
+    private lateinit var switchNormalSBS: SwitchCompat
+    private lateinit var layoutNormalSbsEye: View
+    private lateinit var toggleEyeGroup: com.google.android.material.button.MaterialButtonToggleGroup
+    private lateinit var btnEyeLeft: com.google.android.material.button.MaterialButton
+    private lateinit var btnEyeRight: com.google.android.material.button.MaterialButton
     private lateinit var seekSubtitleDepth: SeekBar
     private lateinit var tvSubtitleDepthLabel: TextView
     private lateinit var subtitleLeft: SubtitleView
@@ -93,7 +100,6 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnToggleSubtitle: View
     private lateinit var seekSubtitleSize: SeekBar
     private lateinit var tvSubtitleSizeLabel: TextView
-    private var normalSwitchButton: ImageButton? = null
 
     private var lastViewportInfo: SBSRenderer.ViewportInfo? = null
     private var subtitleLeftBaseX = 0f
@@ -107,7 +113,6 @@ class PlayerActivity : AppCompatActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val hideControlsRunnable = Runnable { hideControls() }
-    private val hideNormalSwitchRunnable = Runnable { normalSwitchButton?.visibility = View.GONE }
     private val updateProgressRunnable = object : Runnable {
         override fun run() {
             updateProgress()
@@ -125,66 +130,17 @@ class PlayerActivity : AppCompatActivity() {
         vrSettings = VRSettings(this)
         mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_VR
 
-        if (mode == MODE_NORMAL) {
-            setupNormalPlayer()
-        } else {
-            setupVrPlayer()
-        }
+        setupPlayerView()
     }
 
-    private fun setupNormalPlayer() {
-        val playerView = PlayerView(this).apply {
-            useController = true
-            keepScreenOn = true
-        }
-        normalPlayerView = playerView
-        val rootLayout = FrameLayout(this)
-        rootLayout.addView(
-            playerView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-        val switchButton = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_menu_rotate)
-            contentDescription = "切换普通/VR模式"
-            setColorFilter(android.graphics.Color.WHITE)
-            background = null
-            visibility = View.GONE
-            setOnClickListener { switchPlaybackMode(MODE_VR) }
-        }
-        normalSwitchButton = switchButton
-        val switchButtonSize = resources.displayMetrics.density.times(48).toInt()
-        val switchButtonParams = FrameLayout.LayoutParams(switchButtonSize, switchButtonSize).apply {
-            gravity = android.view.Gravity.TOP or android.view.Gravity.END
-            topMargin = resources.displayMetrics.density.times(16).toInt()
-            rightMargin = resources.displayMetrics.density.times(16).toInt()
-        }
-        rootLayout.addView(switchButton, switchButtonParams)
-        rootLayout.setOnClickListener { showNormalSwitchButton() }
-        playerView.setOnClickListener { showNormalSwitchButton() }
-        setContentView(rootLayout)
-
-        val exoPlayer = buildPlayer()
-        playerView.player = exoPlayer
-        player = exoPlayer
-        setPlayerMedia(exoPlayer)
-        exoPlayer.addListener(commonPlayerListener(exoPlayer))
-        exoPlayer.prepare()
-        seekToStartPosition(exoPlayer)
-        exoPlayer.playWhenReady = requestedPlayWhenReady
-        handler.post(updateProgressRunnable)
-    }
-
-    private fun setupVrPlayer() {
+    private fun setupPlayerView() {
         val rootLayout = FrameLayout(this)
         glSurfaceView = GLSurfaceView(this).apply { setEGLContextClientVersion(2) }
         var createdRenderer: SBSRenderer? = null
         val newRenderer = SBSRenderer(
             onSurfaceReady = { surface ->
                 runOnUiThread {
-                    if (mode == MODE_VR && renderer === createdRenderer) initVrPlayer(surface)
+                    if (renderer === createdRenderer) initPlayer(surface)
                 }
             },
             requestRender = { glSurfaceView.requestRender() }
@@ -200,7 +156,7 @@ class PlayerActivity : AppCompatActivity() {
         rootLayout.addView(controlsView)
         setContentView(rootLayout)
         bindControls()
-        applyVRSettings()
+        applySettings()
         findViewById<View>(R.id.subtitleContainer)?.apply {
             bringToFront()
             isClickable = false
@@ -208,6 +164,15 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun singleTapConfirmed(e: MotionEvent): Boolean {
+                if (settingsPanel.visibility == View.VISIBLE) {
+                    settingsPanel.visibility = View.GONE
+                    return true
+                }
+                toggleControls()
+                return true
+            }
+
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (settingsPanel.visibility == View.VISIBLE) {
                     settingsPanel.visibility = View.GONE
@@ -239,6 +204,7 @@ class PlayerActivity : AppCompatActivity() {
         settingsPanel = findViewById(R.id.settingsPanel)
         tvTitle = findViewById(R.id.tvTitle)
         btnPlayPause = findViewById(R.id.btnPlayPause)
+        btnSwitchMode = findViewById(R.id.btnSwitchMode)
         seekBar = findViewById(R.id.seekBar)
         tvCurrentTime = findViewById(R.id.tvCurrentTime)
         tvDuration = findViewById(R.id.tvDuration)
@@ -251,6 +217,13 @@ class PlayerActivity : AppCompatActivity() {
         seekK1 = findViewById(R.id.seekK1)
         seekK2 = findViewById(R.id.seekK2)
         switchSBS3D = findViewById(R.id.switchSBS3D)
+        layoutSbs3dVR = findViewById(R.id.layoutSbs3dVR)
+        layoutNormalSbsSettings = findViewById(R.id.layoutNormalSbsSettings)
+        switchNormalSBS = findViewById(R.id.switchNormalSBS)
+        layoutNormalSbsEye = findViewById(R.id.layoutNormalSbsEye)
+        toggleEyeGroup = findViewById(R.id.toggleEyeGroup)
+        btnEyeLeft = findViewById(R.id.btnEyeLeft)
+        btnEyeRight = findViewById(R.id.btnEyeRight)
         seekSubtitleDepth = findViewById(R.id.seekSubtitleDepth)
         tvSubtitleDepthLabel = findViewById(R.id.tvSubtitleDepthLabel)
         subtitleLeft = findViewById(R.id.subtitleLeft)
@@ -279,8 +252,9 @@ class PlayerActivity : AppCompatActivity() {
             togglePlayback()
             resetAutoHide()
         }
-        findViewById<ImageButton>(R.id.btnSwitchMode).setOnClickListener {
-            switchPlaybackMode(MODE_NORMAL)
+        btnSwitchMode.setOnClickListener {
+            val targetMode = if (mode == MODE_VR) MODE_NORMAL else MODE_VR
+            switchPlaybackMode(targetMode)
         }
         findViewById<ImageButton>(R.id.btnSettings).setOnClickListener {
             settingsPanel.visibility = if (settingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -328,7 +302,27 @@ class PlayerActivity : AppCompatActivity() {
         })
         switchSBS3D.setOnCheckedChangeListener { _, isChecked ->
             vrSettings.sbs3dMode = isChecked
-            renderer?.setSBS3DMode(isChecked)
+            if (mode == MODE_VR) {
+                renderer?.setSBS3DMode(isChecked)
+            }
+        }
+        switchNormalSBS.setOnCheckedChangeListener { _, isChecked ->
+            vrSettings.normalSbsMode = isChecked
+            layoutNormalSbsEye.visibility = if (isChecked) View.VISIBLE else View.GONE
+            if (mode == MODE_NORMAL) {
+                renderer?.setSBS3DMode(isChecked)
+                showToast(if (isChecked) "已开启 SBS 单眼画面提取" else "已恢复普通全幅播放")
+            }
+        }
+        toggleEyeGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) {
+                val eye = if (checkedId == R.id.btnEyeRight) VRSettings.EYE_RIGHT else VRSettings.EYE_LEFT
+                vrSettings.normalSbsEye = eye
+                if (mode == MODE_NORMAL) {
+                    renderer?.setSingleEye(eye)
+                    showToast(if (eye == VRSettings.EYE_RIGHT) "已切换为提取右眼画面" else "已切换为提取左眼画面")
+                }
+            }
         }
         seekSubtitleDepth.setOnSeekBarChangeListener(createVRSeekListener {
             vrSettings.subtitleDepth = it
@@ -361,19 +355,31 @@ class PlayerActivity : AppCompatActivity() {
         override fun onStopTrackingTouch(sb: SeekBar?) {}
     }
 
-    private fun applyVRSettings() {
+    private fun applySettings() {
+        val isVR = (mode == MODE_VR)
         val scale = vrSettings.screenScale
         val gap = vrSettings.screenGap
         val k1 = vrSettings.distortionK1
         val k2 = vrSettings.distortionK2
         val sbs3d = vrSettings.sbs3dMode
+        val normalSbs = vrSettings.normalSbsMode
+        val normalEye = vrSettings.normalSbsEye
         val subDepth = vrSettings.subtitleDepth
         val subSize = vrSettings.subtitleSize
+
         seekScale.progress = scale
         seekGap.progress = gap + 600
         seekK1.progress = k1
         seekK2.progress = k2
         switchSBS3D.isChecked = sbs3d
+        switchNormalSBS.isChecked = normalSbs
+        if (normalEye == VRSettings.EYE_RIGHT) {
+            toggleEyeGroup.check(R.id.btnEyeRight)
+        } else {
+            toggleEyeGroup.check(R.id.btnEyeLeft)
+        }
+        layoutNormalSbsEye.visibility = if (normalSbs) View.VISIBLE else View.GONE
+
         seekSubtitleDepth.progress = subDepth
         seekSubtitleSize.progress = subSize
         tvScaleLabel.text = "画面大小: $scale%"
@@ -382,18 +388,57 @@ class PlayerActivity : AppCompatActivity() {
         tvK2Label.text = "畸变矫正 K2: ${String.format(Locale.US, "%.2f", k2 / 100f)}"
         tvSubtitleDepthLabel.text = "字幕立体深度: $subDepth"
         tvSubtitleSizeLabel.text = "字幕大小: ${String.format(Locale.US, "%.1f%%", subSize / 10f)}"
-        renderer?.setDisplayParams(scale, gap)
-        renderer?.setDistortion(k1 / 100f, k2 / 100f)
-        renderer?.setSBS3DMode(sbs3d)
+
+        // 根据模式控制面板项的可见性
+        if (isVR) {
+            layoutSbs3dVR.visibility = View.VISIBLE
+            layoutNormalSbsSettings.visibility = View.GONE
+            tvScaleLabel.visibility = View.VISIBLE
+            seekScale.visibility = View.VISIBLE
+            tvGapLabel.visibility = View.VISIBLE
+            seekGap.visibility = View.VISIBLE
+            tvK1Label.visibility = View.VISIBLE
+            seekK1.visibility = View.VISIBLE
+            tvK2Label.visibility = View.VISIBLE
+            seekK2.visibility = View.VISIBLE
+            tvSubtitleDepthLabel.visibility = View.VISIBLE
+            seekSubtitleDepth.visibility = View.VISIBLE
+            subtitleRight.visibility = View.VISIBLE
+
+            renderer?.setRenderMode(SBSRenderer.RenderMode.DUAL_VR)
+            renderer?.setDisplayParams(scale, gap)
+            renderer?.setDistortion(k1 / 100f, k2 / 100f)
+            renderer?.setSBS3DMode(sbs3d)
+        } else {
+            layoutSbs3dVR.visibility = View.GONE
+            layoutNormalSbsSettings.visibility = View.VISIBLE
+            tvScaleLabel.visibility = View.GONE
+            seekScale.visibility = View.GONE
+            tvGapLabel.visibility = View.GONE
+            seekGap.visibility = View.GONE
+            tvK1Label.visibility = View.GONE
+            seekK1.visibility = View.GONE
+            tvK2Label.visibility = View.GONE
+            seekK2.visibility = View.GONE
+            tvSubtitleDepthLabel.visibility = View.GONE
+            seekSubtitleDepth.visibility = View.GONE
+            subtitleRight.visibility = View.GONE
+
+            renderer?.setRenderMode(SBSRenderer.RenderMode.SINGLE_SCREEN)
+            renderer?.setDistortion(0f, 0f)
+            renderer?.setSBS3DMode(normalSbs)
+            renderer?.setSingleEye(normalEye)
+        }
+
         applySubtitleDepth(subDepth)
         applySubtitleSize(subSize)
     }
 
-    private fun initVrPlayer(surface: Surface) {
+    private fun initPlayer(surface: Surface) {
         val exoPlayer = buildPlayer()
         exoPlayer.setVideoSurface(surface)
         setPlayerMedia(exoPlayer)
-        exoPlayer.addListener(commonPlayerListener(exoPlayer, vrMode = true))
+        exoPlayer.addListener(commonPlayerListener(exoPlayer))
         exoPlayer.prepare()
         seekToStartPosition(exoPlayer)
         exoPlayer.playWhenReady = requestedPlayWhenReady
@@ -432,23 +477,23 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun commonPlayerListener(exoPlayer: ExoPlayer, vrMode: Boolean = false) = object : Player.Listener {
+    private fun commonPlayerListener(exoPlayer: ExoPlayer) = object : Player.Listener {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
-            if (vrMode) renderer?.setVideoSize(videoSize.width, videoSize.height)
+            renderer?.setVideoSize(videoSize.width, videoSize.height)
         }
         override fun onPlayerError(error: PlaybackException) {
             showToast("播放错误: ${error.message}")
         }
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (vrMode && playbackState == Player.STATE_READY) tvDuration.text = formatTime(exoPlayer.duration)
+            if (playbackState == Player.STATE_READY) tvDuration.text = formatTime(exoPlayer.duration)
             if (playbackState == Player.STATE_ENDED) savePlaybackHistory(force = true)
         }
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (vrMode) updatePlayPauseButton()
+            updatePlayPauseButton()
         }
         override fun onCues(cueGroup: CueGroup) {
-            if (vrMode) {
-                subtitleLeft.setCues(cueGroup.cues)
+            subtitleLeft.setCues(cueGroup.cues)
+            if (mode == MODE_VR) {
                 subtitleRight.setCues(cueGroup.cues)
             }
         }
@@ -505,36 +550,20 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun switchPlaybackMode(targetMode: String) {
         if (targetMode == mode) return
-        val currentPlayer = player
-        val startPositionMs = currentPlayer?.currentPosition?.coerceAtLeast(0L)
-            ?: intent.getLongExtra(EXTRA_START_POSITION_MS, 0L)
-        requestedPlayWhenReady = currentPlayer?.playWhenReady ?: true
-        savePlaybackHistory(force = true)
-        releaseCurrentPlayback()
         mode = targetMode
         intent.putExtra(EXTRA_MODE, targetMode)
-        intent.putExtra(EXTRA_START_POSITION_MS, startPositionMs)
-        controlsVisible = false
-        isSeeking = false
-        if (targetMode == MODE_NORMAL) {
-            setupNormalPlayer()
-        } else {
-            setupVrPlayer()
-        }
+        applySettings()
         showToast(if (targetMode == MODE_NORMAL) "已切换到普通模式" else "已切换到 SBS VR 模式")
+        resetAutoHide()
     }
 
     private fun releaseCurrentPlayback() {
         handler.removeCallbacks(updateProgressRunnable)
         handler.removeCallbacks(hideControlsRunnable)
-        handler.removeCallbacks(hideNormalSwitchRunnable)
-        normalPlayerView?.player = null
-        normalPlayerView = null
-        normalSwitchButton = null
         player?.clearVideoSurface()
         player?.release()
         player = null
-        if (mode == MODE_VR && ::glSurfaceView.isInitialized) {
+        if (::glSurfaceView.isInitialized) {
             glSurfaceView.onPause()
         }
         renderer?.release()
@@ -582,7 +611,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun updateProgress() {
         if (isSeeking) return
         player?.let {
-            if (mode == MODE_VR && it.duration > 0) {
+            if (it.duration > 0) {
                 seekBar.progress = (it.currentPosition * 1000L / it.duration).toInt()
                 tvCurrentTime.text = formatTime(it.currentPosition)
             }
@@ -619,7 +648,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun hideControls() {
-        if (mode != MODE_VR || !::controlsOverlay.isInitialized) return
+        if (!::controlsOverlay.isInitialized) return
         controlsOverlay.animate().alpha(0f).setDuration(200).withEndAction {
             controlsOverlay.visibility = View.GONE
             settingsPanel.visibility = View.GONE
