@@ -123,17 +123,43 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playFromInput(mode: String) {
-        val url = editUrl.text?.toString()?.trim()
+        var url = editUrl.text?.toString()?.trim()
         if (url.isNullOrEmpty()) {
             Toast.makeText(this, R.string.error_empty_url, Toast.LENGTH_SHORT).show()
             return
         }
+        // 自动补全 BV/AV 号为完整 B 站链接
+        url = expandBilibiliId(url)
+        // 同步更新输入框，让用户看到补全后的 URL
+        editUrl.setText(url)
         if (BilibiliParser.isBilibiliUrl(url)) {
             parseBilibiliAndPlay(url, mode)
         } else {
             val history = historyStore.find(url)
             launchPlayer(videoUrl = url, title = history?.title, mode = mode, startPositionMs = history?.positionMs ?: 0L)
         }
+    }
+
+    /**
+     * 若输入看起来像 B 站视频 ID（BV 号或 av 号），则补全为完整的 bilibili.com URL。
+     * 支持格式：
+     *   BV1ZTbC6tEFg  →  https://www.bilibili.com/video/BV1ZTbC6tEFg
+     *   av12345        →  https://www.bilibili.com/video/av12345
+     *   12345          →  https://www.bilibili.com/video/av12345
+     */
+    private fun expandBilibiliId(input: String): String {
+        // BV 号：以 BV 开头，后跟 10 位 Base62 字符
+        if (input.matches(Regex("BV[1-9A-HJ-NP-Za-km-z]{10}"))) {
+            return "https://www.bilibili.com/video/$input"
+        }
+        // av 号：可选 "av" 前缀 + 纯数字
+        if (input.matches(Regex("av\\d+", RegexOption.IGNORE_CASE))) {
+            return "https://www.bilibili.com/video/${input.lowercase()}"
+        }
+        if (input.matches(Regex("\\d+"))) {
+            return "https://www.bilibili.com/video/av$input"
+        }
+        return input
     }
 
     private fun parseBilibiliAndPlay(url: String, mode: String, startPositionOverrideMs: Long? = null) {
