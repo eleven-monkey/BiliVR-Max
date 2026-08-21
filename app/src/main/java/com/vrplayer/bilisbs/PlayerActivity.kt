@@ -52,6 +52,7 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_VIDEO_URL = "video_url"
         const val EXTRA_AUDIO_URL = "audio_url"
         const val EXTRA_SOURCE_URL = "source_url"
+        const val EXTRA_SUBTITLE_PATH = "subtitle_path"
         const val EXTRA_TITLE = "title"
         const val EXTRA_MODE = "mode"
         const val EXTRA_START_POSITION_MS = "start_position_ms"
@@ -421,7 +422,7 @@ class PlayerActivity : AppCompatActivity() {
         )
         val mediaItemBuilder = MediaItem.Builder()
             .setUri(Uri.parse(videoUrl))
-            .setSubtitleConfigurations(findSubtitleConfigurations(videoUrl))
+            .setSubtitleConfigurations(buildSubtitleConfigurations(videoUrl))
         if (audioUrl != null) {
             val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItemBuilder.build())
             val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(MediaItem.fromUri(Uri.parse(audioUrl)))
@@ -453,15 +454,42 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    private fun buildSubtitleConfigurations(videoUrl: String): List<MediaItem.SubtitleConfiguration> {
+        val configs = mutableListOf<MediaItem.SubtitleConfiguration>()
+
+        // 1. 如果传入了 B 站解析/下载的在线 WebVTT 字幕
+        val onlineSubtitlePath = intent.getStringExtra(EXTRA_SUBTITLE_PATH)
+        if (!onlineSubtitlePath.isNullOrBlank()) {
+            val vttFile = File(onlineSubtitlePath)
+            if (vttFile.exists() && vttFile.length() > 0) {
+                configs.add(
+                    MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(vttFile))
+                        .setMimeType(MimeTypes.TEXT_VTT)
+                        .setLanguage("zh")
+                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        .build()
+                )
+            }
+        }
+
+        // 2. 本地视频同名字幕文件
+        configs.addAll(findSubtitleConfigurations(videoUrl))
+        return configs
+    }
+
     private fun findSubtitleConfigurations(videoUrl: String): List<MediaItem.SubtitleConfiguration> {
         val realPath = getRealPathFromUri(videoUrl) ?: return emptyList()
         val videoFile = File(realPath)
         val dir = videoFile.parentFile ?: return emptyList()
         val baseName = videoFile.nameWithoutExtension
         return dir.listFiles { _, name ->
-            name.startsWith(baseName) && (name.endsWith(".srt", true) || name.endsWith(".ass", true))
+            name.startsWith(baseName) && (name.endsWith(".srt", true) || name.endsWith(".ass", true) || name.endsWith(".vtt", true))
         }?.map { subFile ->
-            val mimeType = if (subFile.name.endsWith(".ass", true)) MimeTypes.TEXT_SSA else MimeTypes.APPLICATION_SUBRIP
+            val mimeType = when {
+                subFile.name.endsWith(".ass", true) -> MimeTypes.TEXT_SSA
+                subFile.name.endsWith(".vtt", true) -> MimeTypes.TEXT_VTT
+                else -> MimeTypes.APPLICATION_SUBRIP
+            }
             MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
                 .setMimeType(mimeType)
                 .setLanguage("zh")

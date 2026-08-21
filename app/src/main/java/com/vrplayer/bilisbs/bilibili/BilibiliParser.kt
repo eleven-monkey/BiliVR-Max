@@ -3,17 +3,19 @@ package com.vrplayer.bilisbs.bilibili
 import android.net.Uri
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.vrplayer.bilisbs.model.VideoInfo
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
  * B站视频解析器
  *
  * 从 B 站网页链接中提取 BVid，然后调用 B 站公开 API 获取
- * DASH 格式的视频流和音频流地址。
+ * DASH 格式的视频流和音频流地址以及字幕。
  */
 class BilibiliParser {
 
@@ -23,6 +25,7 @@ class BilibiliParser {
         // B站 API 地址
         private const val API_VIEW = "https://api.bilibili.com/x/web-interface/view"
         private const val API_PLAYURL = "https://api.bilibili.com/x/player/playurl"
+        private const val API_PLAYER_V2 = "https://api.bilibili.com/x/player/v2"
 
         // 浏览器 User-Agent
         private const val USER_AGENT =
@@ -79,9 +82,9 @@ class BilibiliParser {
     }
 
     /**
-     * 解析 B 站视频链接，返回 VideoInfo
+     * 解析 B 站视频链接，返回 VideoInfo（支持传入 cacheDir 自动下载并转换字幕为 WebVTT 格式）
      */
-    fun parse(url: String): VideoInfo {
+    fun parse(url: String, cacheDir: File? = null): VideoInfo {
         // -1. 从包含文字的分享内容中提取真实的 URL
         val extractedUrl = extractUrl(url)
             ?: throw IllegalArgumentException("无法从文本中提取出有效链接: $url")
@@ -159,6 +162,9 @@ class BilibiliParser {
         Log.d(TAG, "音频流: $audioStreamUrl")
         Log.d(TAG, "清晰度: $qualityDesc ($videoQuality)")
 
+        // 9. 获取并转换字幕（如果可用）
+        val (subtitlePath, subtitleDesc) = fetchAndConvertSubtitle(bvid, cid, viewInfo, cacheDir)
+
         return VideoInfo(
             title = fullTitle,
             bvid = bvid,
@@ -167,8 +173,113 @@ class BilibiliParser {
             videoUrl = videoStreamUrl,
             audioUrl = audioStreamUrl,
             quality = videoQuality,
-            qualityDesc = qualityDesc
+            qualityDesc = qualityDesc,
+            subtitlePath = subtitlePath,
+            subtitleDesc = subtitleDesc
         )
+    }
+
+    /**
+     * 获取字幕信息并下载转换为 WebVTT 文件
+     */
+    private fun fetchAndConvertSubtitle(
+        bvid: String,
+        cid: Long,
+        viewInfo: JsonObject,
+        cacheDir: File?
+    ): Pair<String?, String?> {
+        if (cacheDir == null) return Pair(null, null)
+
+        try {
+            // 优先尝试 player/v2 接口（分P字幕和 AI 字幕最准确）
+            var subtitlesArray = fetchSubtitlesFromPlayerV2(bvid, cid)
+            if (subtitlesArray == null || subtitlesArray.size() == 0) {
+                // 降级使用 view 接口里的 subtitle 字段
+                val subObj = viewInfo.getAsJsonObject("subtitle")
+                subtitlesArray = subObj?.getAsJsonArray("subtitles")
+            }
+
+            if (subtitlesArray == null || subtitlesArray.size() == 0) {
+                Log.d(TAG, "未获取到该视频的字幕信息")
+                return Pair(null, null)
+            }
+
+            // 筛选最佳字幕：官方中文 > AI 中文 > 包含中文 > 首个可用
+            var selected: JsonObject? = null
+            for (elem in subtitlesArray) {
+                if (!elem.isJsonObject) continue
+                val obj = elem.asJsonObject
+                val lan = obj.get("lan")?.asString?.lowercase() ?: ""
+                if (lan == "zh-cn" || lan == "zh-hans") {
+                    selected = obj
+                    break
+                }
+            }
+            if (selected == null) {
+                for (elem in subtitlesArray) {
+                    if (!elem.isJsonObject) continue
+                    val obj = elem.asJsonObject
+                    val lan = obj.get("lan")?.asString?.lowercase() ?: ""
+                    if (lan.contains("ai-zh") || lan == "ai-zh-hans") {
+                        selected = obj
+                        break
+                    }
+                }
+            }
+            if (selected == null) {
+                for (elem in subtitlesArray) {
+                    if (!elem.isJsonObject) continue
+                    val obj = elem.asJsonObject
+                    val lan = obj.get("lan")?.asString?.lowercase() ?: ""
+                    if (lan.contains("zh")) {
+                        selected = obj
+                        break
+                    }
+                }
+            }
+            if (selected == null && subtitlesArray.size() > 0 && subtitlesArray[0].isJsonObject) {
+                selected = subtitlesArray[0].asJsonObject
+            }
+
+            if (selected == null) return Pair(null, null)
+
+            var subtitleUrl = selected.get("subtitle_url")?.asString ?: return Pair(null, null)
+            if (subtitleUrl.startsWith("//")) {
+                subtitleUrl = "https:$subtitleUrl"
+            }
+            val lanDoc = selected.get("lan_doc")?.asString ?: "中文字幕"
+            Log.d(TAG, "匹配到字幕: $lanDoc, 链接: $subtitleUrl")
+
+            // 下载字幕 JSON
+            val jsonContent = httpGet(subtitleUrl)
+            val subtitleFile = File(cacheDir, "subtitles/${bvid}_${cid}.vtt")
+            BilibiliSubtitleConverter.saveJsonAsVttFile(jsonContent, subtitleFile)
+            Log.d(TAG, "字幕已转换并缓存至: ${subtitleFile.absolutePath}")
+            return Pair(subtitleFile.absolutePath, lanDoc)
+        } catch (e: Exception) {
+            Log.w(TAG, "获取/下载字幕异常: ${e.message}")
+            return Pair(null, null)
+        }
+    }
+
+    /**
+     * 从 x/player/v2 接口获取分P的字幕列表
+     */
+    private fun fetchSubtitlesFromPlayerV2(bvid: String, cid: Long): JsonArray? {
+        return try {
+            val url = "$API_PLAYER_V2?bvid=$bvid&cid=$cid"
+            val json = httpGet(url)
+            val root = gson.fromJson(json, JsonObject::class.java)
+            if (root.get("code")?.asInt == 0) {
+                val data = root.getAsJsonObject("data")
+                data?.getAsJsonObject("subtitle")?.getAsJsonArray("subtitles")
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "请求 player/v2 失败: ${e.message}")
+            null
+        }
     }
 
     /**

@@ -142,11 +142,12 @@ class MainActivity : AppCompatActivity() {
             try {
                 val parser = BilibiliParser()
                 cookieStore.toCookieHeader()?.let { parser.setCookie(it) }
-                val videoInfo = parser.parse(url)
+                val videoInfo = parser.parse(url, cacheDir)
                 runOnUiThread {
                     setLoading(false)
-                    Log.d(TAG, "解析成功: ${videoInfo.title} [${videoInfo.qualityDesc}]")
-                    Toast.makeText(this, "${videoInfo.title}\n${videoInfo.qualityDesc}", Toast.LENGTH_SHORT).show()
+                    val subInfo = if (!videoInfo.subtitleDesc.isNullOrEmpty()) " · 已加载${videoInfo.subtitleDesc}" else ""
+                    Log.d(TAG, "解析成功: ${videoInfo.title} [${videoInfo.qualityDesc}]$subInfo")
+                    Toast.makeText(this, "${videoInfo.title}\n${videoInfo.qualityDesc}$subInfo", Toast.LENGTH_SHORT).show()
                     val history = historyStore.find(videoInfo.sourceUrl)
                     launchPlayer(
                         videoUrl = videoInfo.videoUrl,
@@ -154,7 +155,8 @@ class MainActivity : AppCompatActivity() {
                         sourceUrl = videoInfo.sourceUrl,
                         title = videoInfo.title,
                         mode = mode,
-                        startPositionMs = startPositionOverrideMs ?: history?.positionMs ?: 0L
+                        startPositionMs = startPositionOverrideMs ?: history?.positionMs ?: 0L,
+                        subtitlePath = videoInfo.subtitlePath
                     )
                 }
             } catch (e: Exception) {
@@ -173,7 +175,8 @@ class MainActivity : AppCompatActivity() {
         sourceUrl: String? = null,
         title: String? = null,
         mode: String,
-        startPositionMs: Long = 0L
+        startPositionMs: Long = 0L,
+        subtitlePath: String? = null
     ) {
         val intent = Intent(this, PlayerActivity::class.java)
         intent.putExtra(PlayerActivity.EXTRA_VIDEO_URL, videoUrl)
@@ -182,6 +185,7 @@ class MainActivity : AppCompatActivity() {
         audioUrl?.let { intent.putExtra(PlayerActivity.EXTRA_AUDIO_URL, it) }
         sourceUrl?.let { intent.putExtra(PlayerActivity.EXTRA_SOURCE_URL, it) }
         title?.let { intent.putExtra(PlayerActivity.EXTRA_TITLE, it) }
+        subtitlePath?.let { intent.putExtra(PlayerActivity.EXTRA_SUBTITLE_PATH, it) }
         startActivity(intent)
     }
 
