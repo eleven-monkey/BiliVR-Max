@@ -36,8 +36,10 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
@@ -456,16 +458,42 @@ class PlayerActivity : AppCompatActivity() {
                 .setUserAgent("BiliSBSVRPlayer")
                 .setDefaultRequestProperties(mapOf("Referer" to "https://www.bilibili.com"))
         )
-        val mediaItemBuilder = MediaItem.Builder()
-            .setUri(Uri.parse(videoUrl))
-            .setSubtitleConfigurations(buildSubtitleConfigurations(videoUrl))
-        if (audioUrl != null) {
-            val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItemBuilder.build())
-            val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(MediaItem.fromUri(Uri.parse(audioUrl)))
-            exoPlayer.setMediaSource(MergingMediaSource(videoSource, audioSource))
-        } else {
-            exoPlayer.setMediaItem(mediaItemBuilder.build())
+
+        val mediaSources = mutableListOf<MediaSource>()
+
+        // 1. 视频流
+        val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
+        mediaSources.add(videoSource)
+
+        // 2. 音频流（DASH 独立音频流）
+        if (!audioUrl.isNullOrBlank()) {
+            val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(Uri.parse(audioUrl)))
+            mediaSources.add(audioSource)
         }
+
+        // 3. 字幕流（在线 WebVTT 或本地字幕）
+        val subtitleConfigs = buildSubtitleConfigurations(videoUrl)
+        for (config in subtitleConfigs) {
+            val subtitleSource = SingleSampleMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(config, C.TIME_UNSET)
+            mediaSources.add(subtitleSource)
+        }
+
+        val mergedSource = if (mediaSources.size == 1) {
+            mediaSources[0]
+        } else {
+            MergingMediaSource(*mediaSources.toTypedArray())
+        }
+
+        exoPlayer.setMediaSource(mergedSource)
+
+        // 默认启用文本轨道，并优先选择中文字幕
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .setPreferredTextLanguage("zh")
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .build()
     }
 
     private fun commonPlayerListener(exoPlayer: ExoPlayer) = object : Player.Listener {
@@ -484,9 +512,7 @@ class PlayerActivity : AppCompatActivity() {
         }
         override fun onCues(cueGroup: CueGroup) {
             subtitleLeft.setCues(cueGroup.cues)
-            if (mode == MODE_VR) {
-                subtitleRight.setCues(cueGroup.cues)
-            }
+            subtitleRight.setCues(cueGroup.cues)
         }
     }
 
@@ -503,6 +529,7 @@ class PlayerActivity : AppCompatActivity() {
                         .setMimeType(MimeTypes.TEXT_VTT)
                         .setLanguage("zh")
                         .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
                         .build()
                 )
             }

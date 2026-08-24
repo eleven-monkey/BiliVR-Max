@@ -194,9 +194,10 @@ class BilibiliParser {
             // 优先尝试 player/v2 接口（分P字幕和 AI 字幕最准确）
             var subtitlesArray = fetchSubtitlesFromPlayerV2(bvid, cid)
             if (subtitlesArray == null || subtitlesArray.size() == 0) {
-                // 降级使用 view 接口里的 subtitle 字段
+                // 降级使用 view 接口里的 subtitle 字段 (B站 view 接口为 data.subtitle.list，兼容 subtitles)
                 val subObj = viewInfo.getAsJsonObject("subtitle")
-                subtitlesArray = subObj?.getAsJsonArray("subtitles")
+                subtitlesArray = subObj?.getAsJsonArray("list")
+                    ?: subObj?.getAsJsonArray("subtitles")
             }
 
             if (subtitlesArray == null || subtitlesArray.size() == 0) {
@@ -204,28 +205,60 @@ class BilibiliParser {
                 return Pair(null, null)
             }
 
-            // 筛选最佳字幕：官方中文 > AI 中文 > 包含中文 > 首个可用
+            Log.d(TAG, "获取到字幕列表(${subtitlesArray.size()}个): $subtitlesArray")
+
+            // 筛选最佳字幕：
+            // 1. 官方简体中文 (zh-cn, zh-hans, zh_cn, zh-hans-cn)
+            // 2. AI 简体中文 (ai-zh, ai-zh-hans, zh-hans-ai, ai-zh-cn)
+            // 3. 繁体中文 (zh-hant, zh-tw, zh-hk)
+            // 4. 其他包含 zh 的字幕
+            // 5. 任意首个可用字幕
+            val zhHansSet = setOf("zh-cn", "zh-hans", "zh_cn", "zh-hans-cn", "chs")
+            val aiZhSet = setOf("ai-zh", "ai-zh-hans", "zh-hans-ai", "ai-zh-cn", "ai-zh-hans-cn")
+            val zhHantSet = setOf("zh-hant", "zh-tw", "zh-hk", "zht")
+
             var selected: JsonObject? = null
+
+            // 1. 官方简体中文
             for (elem in subtitlesArray) {
                 if (!elem.isJsonObject) continue
                 val obj = elem.asJsonObject
                 val lan = obj.get("lan")?.asString?.lowercase() ?: ""
-                if (lan == "zh-cn" || lan == "zh-hans") {
+                val aiType = obj.get("ai_type")?.asInt ?: 0
+                if (aiType == 0 && (zhHansSet.contains(lan) || lan.startsWith("zh-hans") || lan.startsWith("zh-cn"))) {
                     selected = obj
                     break
                 }
             }
+
+            // 2. AI 简体中文
             if (selected == null) {
                 for (elem in subtitlesArray) {
                     if (!elem.isJsonObject) continue
                     val obj = elem.asJsonObject
                     val lan = obj.get("lan")?.asString?.lowercase() ?: ""
-                    if (lan.contains("ai-zh") || lan == "ai-zh-hans") {
+                    val aiType = obj.get("ai_type")?.asInt ?: 0
+                    if (aiType != 0 || aiZhSet.contains(lan) || lan.contains("ai-zh") || lan.contains("zh-hans")) {
                         selected = obj
                         break
                     }
                 }
             }
+
+            // 3. 繁体中文
+            if (selected == null) {
+                for (elem in subtitlesArray) {
+                    if (!elem.isJsonObject) continue
+                    val obj = elem.asJsonObject
+                    val lan = obj.get("lan")?.asString?.lowercase() ?: ""
+                    if (zhHantSet.contains(lan) || lan.contains("hant") || lan.contains("tw") || lan.contains("hk")) {
+                        selected = obj
+                        break
+                    }
+                }
+            }
+
+            // 4. 任意中文
             if (selected == null) {
                 for (elem in subtitlesArray) {
                     if (!elem.isJsonObject) continue
@@ -237,6 +270,8 @@ class BilibiliParser {
                     }
                 }
             }
+
+            // 5. 首个可用字幕
             if (selected == null && subtitlesArray.size() > 0 && subtitlesArray[0].isJsonObject) {
                 selected = subtitlesArray[0].asJsonObject
             }
@@ -246,18 +281,20 @@ class BilibiliParser {
             var subtitleUrl = selected.get("subtitle_url")?.asString ?: return Pair(null, null)
             if (subtitleUrl.startsWith("//")) {
                 subtitleUrl = "https:$subtitleUrl"
+            } else if (subtitleUrl.startsWith("http://")) {
+                subtitleUrl = "https://" + subtitleUrl.substring(7)
             }
-            val lanDoc = selected.get("lan_doc")?.asString ?: "中文字幕"
+            val lanDoc = selected.get("lan_doc")?.asString ?: selected.get("lan")?.asString ?: "字幕"
             Log.d(TAG, "匹配到字幕: $lanDoc, 链接: $subtitleUrl")
 
             // 下载字幕 JSON
             val jsonContent = httpGet(subtitleUrl)
             val subtitleFile = File(cacheDir, "subtitles/${bvid}_${cid}.vtt")
             BilibiliSubtitleConverter.saveJsonAsVttFile(jsonContent, subtitleFile)
-            Log.d(TAG, "字幕已转换并缓存至: ${subtitleFile.absolutePath}")
+            Log.d(TAG, "字幕已转换并缓存至: ${subtitleFile.absolutePath}, 大小: ${subtitleFile.length()} 字节")
             return Pair(subtitleFile.absolutePath, lanDoc)
         } catch (e: Exception) {
-            Log.w(TAG, "获取/下载字幕异常: ${e.message}")
+            Log.w(TAG, "获取/下载字幕异常: ${e.message}", e)
             return Pair(null, null)
         }
     }
@@ -272,7 +309,8 @@ class BilibiliParser {
             val root = gson.fromJson(json, JsonObject::class.java)
             if (root.get("code")?.asInt == 0) {
                 val data = root.getAsJsonObject("data")
-                data?.getAsJsonObject("subtitle")?.getAsJsonArray("subtitles")
+                val subObj = data?.getAsJsonObject("subtitle")
+                subObj?.getAsJsonArray("subtitles") ?: subObj?.getAsJsonArray("list")
             } else {
                 null
             }
