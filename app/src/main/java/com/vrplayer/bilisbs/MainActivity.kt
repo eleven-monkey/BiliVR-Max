@@ -35,6 +35,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnTestUrl: MaterialButton
     private lateinit var btnLocalFile: MaterialButton
     private lateinit var btnLogin: MaterialButton
+    private lateinit var btnFavorites: MaterialButton
+    private lateinit var btnBookmarkUrl: MaterialButton
     private lateinit var loginStatusText: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var statusText: TextView
@@ -43,6 +45,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var cookieStore: CookieStore
     private lateinit var historyStore: PlaybackHistoryStore
+    private lateinit var favoriteStore: FavoriteStore
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -78,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
         cookieStore = CookieStore(this)
         historyStore = PlaybackHistoryStore(this)
+        favoriteStore = FavoriteStore(this)
 
         editUrl = findViewById(R.id.editUrl)
         btnPlayVr = findViewById(R.id.btnPlayVr)
@@ -85,6 +89,8 @@ class MainActivity : AppCompatActivity() {
         btnTestUrl = findViewById(R.id.btnTestUrl)
         btnLocalFile = findViewById(R.id.btnLocalFile)
         btnLogin = findViewById(R.id.btnLogin)
+        btnFavorites = findViewById(R.id.btnFavorites)
+        btnBookmarkUrl = findViewById(R.id.btnBookmarkUrl)
         loginStatusText = findViewById(R.id.loginStatusText)
         progressBar = findViewById(R.id.progressBar)
         statusText = findViewById(R.id.statusText)
@@ -92,6 +98,7 @@ class MainActivity : AppCompatActivity() {
         historyList = findViewById(R.id.historyList)
 
         updateLoginUI()
+        updateFavoritesButtonText()
         checkAndRequestStoragePermission()
 
         btnPlayVr.setOnClickListener { playFromInput(PlayerActivity.MODE_VR) }
@@ -115,11 +122,60 @@ class MainActivity : AppCompatActivity() {
                 loginLauncher.launch(Intent(this, LoginActivity::class.java))
             }
         }
+
+        btnFavorites.setOnClickListener {
+            startActivity(Intent(this, FavoriteActivity::class.java))
+        }
+
+        btnBookmarkUrl.setOnClickListener {
+            bookmarkCurrentInputUrl()
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        updateFavoritesButtonText()
         renderHistory()
+    }
+
+    private fun updateFavoritesButtonText() {
+        val count = favoriteStore.getAll().size
+        btnFavorites.text = if (count > 0) "★ 我的收藏 ($count)" else "★ 我的收藏"
+    }
+
+    private fun bookmarkCurrentInputUrl() {
+        var url = editUrl.text?.toString()?.trim()
+        if (url.isNullOrEmpty()) {
+            Toast.makeText(this, "请先在上方输入或粘贴视频链接", Toast.LENGTH_SHORT).show()
+            return
+        }
+        url = expandBilibiliId(url)
+        editUrl.setText(url)
+
+        if (favoriteStore.isFavorite(url)) {
+            Toast.makeText(this, "此视频已在收藏列表中", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (BilibiliParser.isBilibiliUrl(url)) {
+            Toast.makeText(this, "正在获取视频信息并收藏...", Toast.LENGTH_SHORT).show()
+            val targetUrl = url
+            Thread {
+                val parser = BilibiliParser()
+                cookieStore.toCookieHeader()?.let { parser.setCookie(it) }
+                val title = parser.fetchTitleFast(targetUrl) ?: "B站视频: $targetUrl"
+                runOnUiThread {
+                    favoriteStore.add(title, targetUrl)
+                    updateFavoritesButtonText()
+                    Toast.makeText(this, "收藏成功: $title", Toast.LENGTH_SHORT).show()
+                }
+            }.start()
+        } else {
+            val title = historyStore.find(url)?.title ?: "影片: $url"
+            favoriteStore.add(title, url)
+            updateFavoritesButtonText()
+            Toast.makeText(this, "收藏成功", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun playFromInput(mode: String) {
@@ -223,8 +279,24 @@ class MainActivity : AppCompatActivity() {
 
         items.take(8).forEach { item ->
             val row = layoutInflater.inflate(R.layout.history_item, historyList, false)
-            row.findViewById<TextView>(R.id.historyItemTitle).text = item.title?.takeIf { it.isNotBlank() } ?: "未命名视频"
+            val title = item.title?.takeIf { it.isNotBlank() } ?: "未命名视频"
+            val videoTargetUrl = item.sourceUrl ?: item.videoUrl
+            row.findViewById<TextView>(R.id.historyItemTitle).text = title
             row.findViewById<TextView>(R.id.historyItemMeta).text = buildHistoryMeta(item)
+
+            val btnFav = row.findViewById<MaterialButton>(R.id.btnHistoryFavorite)
+            val isFav = favoriteStore.isFavorite(videoTargetUrl)
+            btnFav.text = if (isFav) "★ 已收藏" else "★ 收藏"
+            btnFav.alpha = if (isFav) 1.0f else 0.7f
+
+            btnFav.setOnClickListener {
+                val nowFav = favoriteStore.toggle(title, videoTargetUrl)
+                btnFav.text = if (nowFav) "★ 已收藏" else "★ 收藏"
+                btnFav.alpha = if (nowFav) 1.0f else 0.7f
+                updateFavoritesButtonText()
+                Toast.makeText(this, if (nowFav) "已添加到收藏" else "已取消收藏", Toast.LENGTH_SHORT).show()
+            }
+
             row.findViewById<MaterialButton>(R.id.btnHistoryResume).setOnClickListener {
                 playHistoryItem(item, item.positionMs)
             }
