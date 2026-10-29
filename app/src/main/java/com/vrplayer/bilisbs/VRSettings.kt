@@ -46,6 +46,11 @@ class VRSettings(context: Context) {
         const val SUBTITLE_SIZE_MIN = 20
         const val SUBTITLE_SIZE_MAX = 100
         const val SUBTITLE_SIZE_DEFAULT = 40
+
+        private const val KEY_SUBTITLE_Y_OFFSET = "subtitle_y_offset"
+        const val SUBTITLE_Y_OFFSET_MIN = -600
+        const val SUBTITLE_Y_OFFSET_MAX = 600
+        const val SUBTITLE_Y_OFFSET_DEFAULT = -60
     }
 
     private val prefs: SharedPreferences =
@@ -95,4 +100,9 @@ class VRSettings(context: Context) {
     var subtitleSize: Int
         get() = prefs.getInt(KEY_SUBTITLE_SIZE, SUBTITLE_SIZE_DEFAULT)
         set(value) = prefs.edit().putInt(KEY_SUBTITLE_SIZE, value.coerceIn(SUBTITLE_SIZE_MIN, SUBTITLE_SIZE_MAX)).apply()
+
+    /** 字幕垂直位置偏移量 px（负值向上，正值向下） */
+    var subtitleYOffset: Int
+        get() = prefs.getInt(KEY_SUBTITLE_Y_OFFSET, SUBTITLE_Y_OFFSET_DEFAULT)
+        set(value) = prefs.edit().putInt(KEY_SUBTITLE_Y_OFFSET, value.coerceIn(SUBTITLE_Y_OFFSET_MIN, SUBTITLE_Y_OFFSET_MAX)).apply()
 }

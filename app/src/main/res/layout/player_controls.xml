@@ -16,14 +16,14 @@
 
         <androidx.media3.ui.SubtitleView
             android:id="@+id/subtitleLeft"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:layout_gravity="start|top" />
 
         <androidx.media3.ui.SubtitleView
             android:id="@+id/subtitleRight"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:layout_gravity="start|top" />
     </FrameLayout>
 
@@ -49,13 +49,25 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_alignParentStart="true"
-                android:layout_toStartOf="@+id/btnSwitchMode"
+                android:layout_toStartOf="@+id/btnPlayerFavorite"
+                android:layout_centerVertical="true"
                 android:text=""
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:maxLines="1"
                 android:ellipsize="end" />
+
+            <ImageButton
+                android:id="@+id/btnPlayerFavorite"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_toStartOf="@+id/btnSwitchMode"
+                android:layout_centerVertical="true"
+                android:src="@drawable/ic_star_outline"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="收藏/取消收藏"
+                app:tint="#FFFFFF" />
 
             <ImageButton
                 android:id="@+id/btnSwitchMode"
@@ -147,7 +159,8 @@
         android:background="@drawable/settings_panel_bg"
         android:visibility="gone"
         android:elevation="10dp"
-        android:scrollbars="none">
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -268,6 +281,9 @@
             <TextView android:id="@+id/tvSubtitleDepthLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="字幕立体深度" android:textColor="#CCFFFFFF" android:textSize="13sp" />
             <SeekBar android:id="@+id/seekSubtitleDepth" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" android:progress="15" android:layout_marginBottom="12dp" />
 
+            <TextView android:id="@+id/tvSubtitleYLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="字幕垂直位置 (支持直接触摸拖动)" android:textColor="#CCFFFFFF" android:textSize="13sp" />
+            <SeekBar android:id="@+id/seekSubtitleY" android:layout_width="match_parent" android:layout_height="wrap_content" android:max="1200" android:progress="540" android:layout_marginBottom="12dp" />
+
             <TextView android:id="@+id/tvSubtitleSizeLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="字幕大小" android:textColor="#CCFFFFFF" android:textSize="13sp" />
             <SeekBar android:id="@+id/seekSubtitleSize" android:layout_width="match_parent" android:layout_height="wrap_content" android:min="20" android:max="100" android:progress="40" android:layout_marginBottom="16dp" />
 
@@ -275,7 +291,7 @@
                 android:id="@+id/btnToggleSubtitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="切换/开启字幕"
+                android:text="字幕：开（点击关闭）"
                 app:backgroundTint="#FF6750A4"
                 style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
                 android:layout_marginBottom="12dp"/>

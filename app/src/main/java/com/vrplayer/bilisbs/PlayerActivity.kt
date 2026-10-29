@@ -39,7 +39,6 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
@@ -69,6 +68,7 @@ class PlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var renderer: SBSRenderer? = null
     private lateinit var historyStore: PlaybackHistoryStore
+    private lateinit var favoriteStore: FavoriteStore
     private lateinit var vrSettings: VRSettings
 
     private lateinit var controlsOverlay: View
@@ -76,6 +76,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var tvTitle: TextView
     private lateinit var btnPlayPause: ImageButton
     private lateinit var btnSwitchMode: ImageButton
+    private lateinit var btnPlayerFavorite: ImageButton
     private lateinit var seekBar: SeekBar
     private lateinit var tvCurrentTime: TextView
     private lateinit var tvDuration: TextView
@@ -97,6 +98,8 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnEyeRight: com.google.android.material.button.MaterialButton
     private lateinit var seekSubtitleDepth: SeekBar
     private lateinit var tvSubtitleDepthLabel: TextView
+    private lateinit var seekSubtitleY: SeekBar
+    private lateinit var tvSubtitleYLabel: TextView
     private lateinit var subtitleLeft: SubtitleView
     private lateinit var subtitleRight: SubtitleView
     private lateinit var btnToggleSubtitle: View
@@ -112,6 +115,15 @@ class PlayerActivity : AppCompatActivity() {
     private var mode = MODE_VR
     private var historySavedPositionMs = -1L
     private var requestedPlayWhenReady = true
+
+    // 字幕拖动手势状态（提升到 Activity 级别，确保子视图不会拦截）
+    private var subtitleDragDownX = 0f
+    private var subtitleDragDownY = 0f
+    private var subtitleDragStartOffset = 0
+    private var isSubtitleDragging = false
+    private var subtitleDragTouchSlop = 0
+    /** 本次手势的按下点是否落在设置面板内（是则手势交给面板滚动，不参与字幕拖动） */
+    private var touchStartedInSettingsPanel = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val hideControlsRunnable = Runnable { hideControls() }
@@ -129,10 +141,83 @@ class PlayerActivity : AppCompatActivity() {
         hideSystemUI()
 
         historyStore = PlaybackHistoryStore(this)
+        favoriteStore = FavoriteStore(this)
         vrSettings = VRSettings(this)
         mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_VR
+        subtitleDragTouchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
 
         setupPlayerView()
+    }
+
+    /**
+     * 在 Activity 最顶层拦截触摸事件，优先检测字幕拖动手势（上下滑动）。
+     *
+     * 注意：设置面板展开时，落点在面板内的手势必须交还给面板自身滚动，
+     * 否则纵向滑动会被字幕拖动无条件吞掉，面板底部的选项（如字幕开关）永远滚不到。
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // 按下瞬间决定这整段手势的归属，避免拖到面板边缘时中途易手
+                val px = if (ev.rawX != 0f || ev.rawY != 0f) ev.rawX else ev.x
+                val py = if (ev.rawX != 0f || ev.rawY != 0f) ev.rawY else ev.y
+                touchStartedInSettingsPanel = isPointInSettingsPanel(px, py)
+                if (touchStartedInSettingsPanel) {
+                    isSubtitleDragging = false
+                    return super.dispatchTouchEvent(ev)
+                }
+                subtitleDragDownX = ev.x
+                subtitleDragDownY = ev.y
+                subtitleDragStartOffset = vrSettings.subtitleYOffset
+                isSubtitleDragging = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (touchStartedInSettingsPanel) return super.dispatchTouchEvent(ev)
+                val dx = ev.x - subtitleDragDownX
+                val dy = ev.y - subtitleDragDownY
+                if (!isSubtitleDragging &&
+                    kotlin.math.abs(dy) > subtitleDragTouchSlop * 2 &&
+                    kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.5f
+                ) {
+                    isSubtitleDragging = true
+                }
+                if (isSubtitleDragging) {
+                    val newOffset = (subtitleDragStartOffset + dy.toInt())
+                        .coerceIn(VRSettings.SUBTITLE_Y_OFFSET_MIN, VRSettings.SUBTITLE_Y_OFFSET_MAX)
+                    vrSettings.subtitleYOffset = newOffset
+                    applySubtitlePositions()
+                    if (::seekSubtitleY.isInitialized) {
+                        seekSubtitleY.progress = newOffset + 600
+                        tvSubtitleYLabel.text = "字幕垂直位置: ${newOffset}px"
+                    }
+                    // 拖动中消费事件，防止误触控制面板
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (touchStartedInSettingsPanel) {
+                    touchStartedInSettingsPanel = false
+                    return super.dispatchTouchEvent(ev)
+                }
+                if (isSubtitleDragging) {
+                    isSubtitleDragging = false
+                    showToast("字幕位置已保存 (${vrSettings.subtitleYOffset}px)")
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** 屏幕坐标是否落在已展开的设置面板内 */
+    private fun isPointInSettingsPanel(x: Float, y: Float): Boolean {
+        if (!::settingsPanel.isInitialized) return false
+        if (settingsPanel.visibility != View.VISIBLE) return false
+        if (settingsPanel.width == 0 || settingsPanel.height == 0) return false
+        val loc = IntArray(2)
+        settingsPanel.getLocationOnScreen(loc)
+        return x >= loc[0] && x <= loc[0] + settingsPanel.width &&
+            y >= loc[1] && y <= loc[1] + settingsPanel.height
     }
 
     private fun setupPlayerView() {
@@ -168,7 +253,7 @@ class PlayerActivity : AppCompatActivity() {
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (settingsPanel.visibility == View.VISIBLE) {
-                    settingsPanel.visibility = View.GONE
+                    setSettingsPanelVisible(false)
                     return true
                 }
                 toggleControls()
@@ -186,6 +271,7 @@ class PlayerActivity : AppCompatActivity() {
                 return true
             }
         })
+
         rootLayout.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
             true
@@ -198,6 +284,7 @@ class PlayerActivity : AppCompatActivity() {
         tvTitle = findViewById(R.id.tvTitle)
         btnPlayPause = findViewById(R.id.btnPlayPause)
         btnSwitchMode = findViewById(R.id.btnSwitchMode)
+        btnPlayerFavorite = findViewById(R.id.btnPlayerFavorite)
         seekBar = findViewById(R.id.seekBar)
         tvCurrentTime = findViewById(R.id.tvCurrentTime)
         tvDuration = findViewById(R.id.tvDuration)
@@ -219,6 +306,8 @@ class PlayerActivity : AppCompatActivity() {
         btnEyeRight = findViewById(R.id.btnEyeRight)
         seekSubtitleDepth = findViewById(R.id.seekSubtitleDepth)
         tvSubtitleDepthLabel = findViewById(R.id.tvSubtitleDepthLabel)
+        seekSubtitleY = findViewById(R.id.seekSubtitleY)
+        tvSubtitleYLabel = findViewById(R.id.tvSubtitleYLabel)
         subtitleLeft = findViewById(R.id.subtitleLeft)
         subtitleRight = findViewById(R.id.subtitleRight)
         btnToggleSubtitle = findViewById(R.id.btnToggleSubtitle)
@@ -241,6 +330,11 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         tvTitle.text = intent.getStringExtra(EXTRA_TITLE) ?: "视频播放中"
+        updateFavoriteButtonState()
+        btnPlayerFavorite.setOnClickListener {
+            toggleFavoriteFromPlayer()
+            resetAutoHide()
+        }
         btnPlayPause.setOnClickListener {
             togglePlayback()
             resetAutoHide()
@@ -250,12 +344,10 @@ class PlayerActivity : AppCompatActivity() {
             switchPlaybackMode(targetMode)
         }
         findViewById<ImageButton>(R.id.btnSettings).setOnClickListener {
-            settingsPanel.visibility = if (settingsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            resetAutoHide()
+            setSettingsPanelVisible(settingsPanel.visibility != View.VISIBLE)
         }
         findViewById<View>(R.id.btnCloseSettings).setOnClickListener {
-            settingsPanel.visibility = View.GONE
-            resetAutoHide()
+            setSettingsPanelVisible(false)
         }
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -319,8 +411,14 @@ class PlayerActivity : AppCompatActivity() {
         }
         seekSubtitleDepth.setOnSeekBarChangeListener(createVRSeekListener {
             vrSettings.subtitleDepth = it
-            applySubtitleDepth(it)
+            applySubtitlePositions()
             tvSubtitleDepthLabel.text = "字幕立体深度: $it"
+        })
+        seekSubtitleY.setOnSeekBarChangeListener(createVRSeekListener {
+            val realY = it - 600
+            vrSettings.subtitleYOffset = realY
+            applySubtitlePositions()
+            tvSubtitleYLabel.text = "字幕垂直位置: ${realY}px"
         })
         seekSubtitleSize.setOnSeekBarChangeListener(createVRSeekListener {
             vrSettings.subtitleSize = it
@@ -334,10 +432,20 @@ class PlayerActivity : AppCompatActivity() {
                 p.trackSelectionParameters = params.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !isDisabled)
                     .build()
+                updateSubtitleToggleText()
                 showToast(if (isDisabled) "字幕已开启" else "字幕已关闭")
                 resetAutoHide()
             }
         }
+    }
+
+    /** 同步字幕开关按钮文案，让当前状态一眼可见 */
+    private fun updateSubtitleToggleText() {
+        if (!::btnToggleSubtitle.isInitialized) return
+        val disabled = player?.trackSelectionParameters
+            ?.disabledTrackTypes?.contains(C.TRACK_TYPE_TEXT) ?: false
+        (btnToggleSubtitle as? TextView)?.text =
+            if (disabled) "字幕：关（点击开启）" else "字幕：开（点击关闭）"
     }
 
     private fun createVRSeekListener(onChanged: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
@@ -359,6 +467,7 @@ class PlayerActivity : AppCompatActivity() {
         val normalEye = vrSettings.normalSbsEye
         val subDepth = vrSettings.subtitleDepth
         val subSize = vrSettings.subtitleSize
+        val subY = vrSettings.subtitleYOffset
 
         seekScale.progress = scale
         seekGap.progress = gap + 600
@@ -374,12 +483,14 @@ class PlayerActivity : AppCompatActivity() {
         layoutNormalSbsEye.visibility = if (normalSbs) View.VISIBLE else View.GONE
 
         seekSubtitleDepth.progress = subDepth
+        seekSubtitleY.progress = subY + 600
         seekSubtitleSize.progress = subSize
         tvScaleLabel.text = "画面大小: $scale%"
         tvGapLabel.text = "双屏间距: $gap"
         tvK1Label.text = "畸变矫正 K1: ${String.format(Locale.US, "%.2f", k1 / 100f)}"
         tvK2Label.text = "畸变矫正 K2: ${String.format(Locale.US, "%.2f", k2 / 100f)}"
         tvSubtitleDepthLabel.text = "字幕立体深度: $subDepth"
+        tvSubtitleYLabel.text = "字幕垂直位置: ${subY}px"
         tvSubtitleSizeLabel.text = "字幕大小: ${String.format(Locale.US, "%.1f%%", subSize / 10f)}"
 
         // 根据模式控制面板项的可见性
@@ -423,8 +534,9 @@ class PlayerActivity : AppCompatActivity() {
             renderer?.setSingleEye(normalEye)
         }
 
-        applySubtitleDepth(subDepth)
+        applySubtitlePositions()
         applySubtitleSize(subSize)
+        updateSubtitleToggleText()
     }
 
     private fun initPlayer(surface: Surface) {
@@ -459,35 +571,26 @@ class PlayerActivity : AppCompatActivity() {
                 .setDefaultRequestProperties(mapOf("Referer" to "https://www.bilibili.com"))
         )
 
-        val mediaSources = mutableListOf<MediaSource>()
+        // 1. 构建字幕配置并附加到视频流 MediaItem
+        val subtitleConfigs = buildSubtitleConfigurations(videoUrl)
+        val videoMediaItem = MediaItem.Builder()
+            .setUri(Uri.parse(videoUrl))
+            .setSubtitleConfigurations(subtitleConfigs)
+            .build()
 
-        // 1. 视频流
-        val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
-        mediaSources.add(videoSource)
+        val mediaSourceFactory = DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory)
+        val videoSource = mediaSourceFactory.createMediaSource(videoMediaItem)
 
-        // 2. 音频流（DASH 独立音频流）
-        if (!audioUrl.isNullOrBlank()) {
+        // 2. 如果存在独立音频流（DASH 分离音轨），使用 MergingMediaSource 合并音视频
+        val finalSource = if (!audioUrl.isNullOrBlank()) {
             val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
                 .createMediaSource(MediaItem.fromUri(Uri.parse(audioUrl)))
-            mediaSources.add(audioSource)
-        }
-
-        // 3. 字幕流（在线 WebVTT 或本地字幕）
-        val subtitleConfigs = buildSubtitleConfigurations(videoUrl)
-        for (config in subtitleConfigs) {
-            val subtitleSource = SingleSampleMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(config, C.TIME_UNSET)
-            mediaSources.add(subtitleSource)
-        }
-
-        val mergedSource = if (mediaSources.size == 1) {
-            mediaSources[0]
+            MergingMediaSource(videoSource, audioSource)
         } else {
-            MergingMediaSource(*mediaSources.toTypedArray())
+            videoSource
         }
 
-        exoPlayer.setMediaSource(mergedSource)
+        exoPlayer.setMediaSource(finalSource)
 
         // 默认启用文本轨道，并优先选择中文字幕
         exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
@@ -589,13 +692,19 @@ class PlayerActivity : AppCompatActivity() {
         lastViewportInfo = null
     }
 
-    private fun applySubtitleDepth(depth: Int) {
-        val vpW = lastViewportInfo?.vpW ?: return
-        val shiftPx = depth.toFloat() / VRSettings.SUBTITLE_DEPTH_MAX * vpW * 0.05f
+    private fun applySubtitlePositions() {
+        val depth = vrSettings.subtitleDepth
+        val offsetY = vrSettings.subtitleYOffset.toFloat()
+        val vpW = lastViewportInfo?.vpW ?: subtitleLeft.width.takeIf { it > 0 } ?: 0
+        val shiftPx = if (vpW > 0) depth.toFloat() / VRSettings.SUBTITLE_DEPTH_MAX * vpW * 0.05f else 0f
         subtitleLeft.translationX = subtitleLeftBaseX + shiftPx
-        subtitleLeft.translationY = subtitleBaseY
+        subtitleLeft.translationY = subtitleBaseY + offsetY
         subtitleRight.translationX = subtitleRightBaseX - shiftPx
-        subtitleRight.translationY = subtitleBaseY
+        subtitleRight.translationY = subtitleBaseY + offsetY
+    }
+
+    private fun applySubtitleDepth(depth: Int) {
+        applySubtitlePositions()
     }
 
     private fun applySubtitleSize(size: Int) {
@@ -610,7 +719,7 @@ class PlayerActivity : AppCompatActivity() {
         subtitleLeftBaseX = info.leftX.toFloat()
         subtitleRightBaseX = info.rightX.toFloat()
         subtitleBaseY = info.vpY.toFloat()
-        applySubtitleDepth(vrSettings.subtitleDepth)
+        applySubtitlePositions()
     }
 
     private fun togglePlayback() { player?.let { it.playWhenReady = !it.playWhenReady } }
@@ -676,7 +785,22 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun resetAutoHide() {
         handler.removeCallbacks(hideControlsRunnable)
+        // 设置面板展开期间不自动隐藏，否则用户还没滚动到目标选项，面板就自己消失了
+        if (::settingsPanel.isInitialized && settingsPanel.visibility == View.VISIBLE) return
         handler.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY)
+    }
+
+    /** 统一控制设置面板显隐：展开时取消自动隐藏计时，收起时恢复计时 */
+    private fun setSettingsPanelVisible(visible: Boolean) {
+        if (!::settingsPanel.isInitialized) return
+        settingsPanel.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible) {
+            handler.removeCallbacks(hideControlsRunnable)
+            if (!controlsVisible) showControls()
+            updateSubtitleToggleText()
+        } else {
+            resetAutoHide()
+        }
     }
 
     private fun formatTime(ms: Long): String {
@@ -767,6 +891,41 @@ class PlayerActivity : AppCompatActivity() {
         player?.playWhenReady = false
         handler.removeCallbacks(updateProgressRunnable)
         handler.removeCallbacks(hideControlsRunnable)
+    }
+
+    private fun getCurrentFavoriteTarget(): Pair<String, String>? {
+        val targetUrl = intent.getStringExtra(EXTRA_SOURCE_URL)
+            ?: intent.getStringExtra(EXTRA_VIDEO_URL)
+            ?: return null
+        val targetTitle = intent.getStringExtra(EXTRA_TITLE) ?: "未命名影片"
+        return Pair(targetTitle, targetUrl)
+    }
+
+    private fun updateFavoriteButtonState() {
+        val target = getCurrentFavoriteTarget() ?: return
+        val isFav = favoriteStore.isFavorite(target.second)
+        if (isFav) {
+            btnPlayerFavorite.setImageResource(R.drawable.ic_star_filled)
+            btnPlayerFavorite.setColorFilter(android.graphics.Color.parseColor("#FFD700"))
+        } else {
+            btnPlayerFavorite.setImageResource(R.drawable.ic_star_outline)
+            btnPlayerFavorite.setColorFilter(android.graphics.Color.WHITE)
+        }
+    }
+
+    private fun toggleFavoriteFromPlayer() {
+        val target = getCurrentFavoriteTarget()
+        if (target == null) {
+            Toast.makeText(this, "未获取到有效视频链接，无法收藏", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val isNowFav = favoriteStore.toggle(target.first, target.second)
+        updateFavoriteButtonState()
+        Toast.makeText(
+            this,
+            if (isNowFav) "已添加到我的收藏" else "已取消收藏",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     override fun onDestroy() {
