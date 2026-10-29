@@ -26,6 +26,8 @@ class BilibiliParser {
         private const val API_VIEW = "https://api.bilibili.com/x/web-interface/view"
         private const val API_PLAYURL = "https://api.bilibili.com/x/player/playurl"
         private const val API_PLAYER_V2 = "https://api.bilibili.com/x/player/v2"
+        private const val API_PLAYER_WBI_V2 = "https://api.bilibili.com/x/player/wbi/v2"
+        private const val API_NAV = "https://api.bilibili.com/x/web-interface/nav"
 
         // 浏览器 User-Agent
         private const val USER_AGENT =
@@ -36,6 +38,14 @@ class BilibiliParser {
 
         // URL 正则
         private val URL_REGEX = Regex("(https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|])")
+
+        // WBI 混淆表
+        private val MIXIN_KEY_ENC_TAB = intArrayOf(
+            46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+            33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+            61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+            36, 20, 34, 44, 52
+        )
 
         /**
          * 判断一个 URL 是否是 B 站视频链接
@@ -74,11 +84,50 @@ class BilibiliParser {
     // 登录后的 Cookie（含 SESSDATA，可解锁高清）
     private var cookieHeader: String? = null
 
+    @Volatile private var cachedImgKey: String? = null
+    @Volatile private var cachedSubKey: String? = null
+    @Volatile private var lastWbiKeyFetchTime: Long = 0L
+
     /**
      * 设置登录 Cookie，解锁 1080P+ 清晰度
      */
     fun setCookie(cookie: String?) {
         cookieHeader = cookie
+    }
+
+    /**
+     * 轻量快速获取视频标题（仅请求 view 接口，不进行流解析与签名，耗时极短）
+     */
+    fun fetchTitleFast(url: String): String? {
+        return try {
+            val extractedUrl = extractUrl(url) ?: url
+            val realUrl = resolveShortUrl(extractedUrl)
+            val bvid = extractBvid(realUrl) ?: return null
+            val pageIndex = Uri.parse(realUrl).getQueryParameter("p")?.toIntOrNull()
+                ?: Uri.parse(extractedUrl).getQueryParameter("p")?.toIntOrNull()
+                ?: 1
+            val viewInfo = fetchVideoView(bvid)
+            val title = viewInfo.get("title")?.asString ?: return null
+            val pagesArray = viewInfo.getAsJsonArray("pages")
+            var partTitle = ""
+            if (pagesArray != null) {
+                for (page in pagesArray) {
+                    val pageObj = page.asJsonObject
+                    if (pageObj.get("page")?.asInt == pageIndex) {
+                        partTitle = pageObj.get("part")?.asString ?: ""
+                        break
+                    }
+                }
+            }
+            if (partTitle.isNotEmpty() && pageIndex > 1) {
+                "$title - P$pageIndex $partTitle"
+            } else {
+                title
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "快速获取标题失败: ${e.message}")
+            null
+        }
     }
 
     /**
@@ -103,9 +152,10 @@ class BilibiliParser {
             ?: 1
         Log.d(TAG, "目标分P: P$pageIndex")
 
-        // 3. 获取视频基本信息（title + pages 数组）
+        // 3. 获取视频基本信息（title + pages 数组 + aid）
         val viewInfo = fetchVideoView(bvid)
         val title = viewInfo.get("title").asString
+        val aid = viewInfo.get("aid")?.asLong ?: 0L
 
         // 4. 从 pages 数组中找到目标分P的 cid
         val pagesArray = viewInfo.getAsJsonArray("pages")
@@ -128,7 +178,7 @@ class BilibiliParser {
         } else {
             title
         }
-        Log.d(TAG, "视频标题: $fullTitle, CID: $cid")
+        Log.d(TAG, "视频标题: $fullTitle, AID: $aid, CID: $cid")
 
         // 5. 获取 DASH 播放地址
         val playInfo = fetchPlayUrl(bvid, cid)
@@ -163,7 +213,7 @@ class BilibiliParser {
         Log.d(TAG, "清晰度: $qualityDesc ($videoQuality)")
 
         // 9. 获取并转换字幕（如果可用）
-        val (subtitlePath, subtitleDesc) = fetchAndConvertSubtitle(bvid, cid, viewInfo, cacheDir)
+        val (subtitlePath, subtitleDesc) = fetchAndConvertSubtitle(aid, bvid, cid, viewInfo, cacheDir)
 
         return VideoInfo(
             title = fullTitle,
@@ -183,6 +233,7 @@ class BilibiliParser {
      * 获取字幕信息并下载转换为 WebVTT 文件
      */
     private fun fetchAndConvertSubtitle(
+        aid: Long,
         bvid: String,
         cid: Long,
         viewInfo: JsonObject,
@@ -191,21 +242,42 @@ class BilibiliParser {
         if (cacheDir == null) return Pair(null, null)
 
         try {
-            // 优先尝试 player/v2 接口（分P字幕和 AI 字幕最准确）
-            var subtitlesArray = fetchSubtitlesFromPlayerV2(bvid, cid)
-            if (subtitlesArray == null || subtitlesArray.size() == 0) {
-                // 降级使用 view 接口里的 subtitle 字段 (B站 view 接口为 data.subtitle.list，兼容 subtitles)
+            // 1. 优先尝试 player/wbi/v2 接口（带 WBI 签名，最准确且包含真实 subtitle_url）
+            var rawSubtitles = fetchSubtitlesFromPlayerWbi(aid, cid, bvid)
+            if (rawSubtitles == null || rawSubtitles.size() == 0) {
+                // 2. 尝试 player/v2 接口
+                rawSubtitles = fetchSubtitlesFromPlayerV2(bvid, cid)
+            }
+            if (rawSubtitles == null || rawSubtitles.size() == 0) {
+                // 3. 降级使用 view 接口里的 subtitle 字段
                 val subObj = viewInfo.getAsJsonObject("subtitle")
-                subtitlesArray = subObj?.getAsJsonArray("list")
+                rawSubtitles = subObj?.getAsJsonArray("list")
                     ?: subObj?.getAsJsonArray("subtitles")
             }
 
-            if (subtitlesArray == null || subtitlesArray.size() == 0) {
+            if (rawSubtitles == null || rawSubtitles.size() == 0) {
                 Log.d(TAG, "未获取到该视频的字幕信息")
                 return Pair(null, null)
             }
 
-            Log.d(TAG, "获取到字幕列表(${subtitlesArray.size()}个): $subtitlesArray")
+            // 过滤出真正具有有效非空 subtitle_url 的字幕项
+            val subtitlesArray = JsonArray()
+            for (elem in rawSubtitles) {
+                if (elem.isJsonObject) {
+                    val obj = elem.asJsonObject
+                    val subUrl = obj.get("subtitle_url")?.asString
+                    if (!subUrl.isNullOrBlank()) {
+                        subtitlesArray.add(obj)
+                    }
+                }
+            }
+
+            if (subtitlesArray.size() == 0) {
+                Log.d(TAG, "字幕列表无有效下载链接 (subtitle_url 均为空)")
+                return Pair(null, null)
+            }
+
+            Log.d(TAG, "获取到有效字幕列表(${subtitlesArray.size()}个): $subtitlesArray")
 
             // 筛选最佳字幕：
             // 1. 官方简体中文 (zh-cn, zh-hans, zh_cn, zh-hans-cn)
@@ -300,6 +372,34 @@ class BilibiliParser {
     }
 
     /**
+     * 从 x/player/wbi/v2 接口获取分P的字幕列表 (带 WBI 签名)
+     */
+    private fun fetchSubtitlesFromPlayerWbi(aid: Long, cid: Long, bvid: String): JsonArray? {
+        val keys = getWbiKeys() ?: return null
+        return try {
+            val params = mapOf(
+                "aid" to aid.toString(),
+                "cid" to cid.toString(),
+                "bvid" to bvid
+            )
+            val signedQuery = encWbi(params, keys.first, keys.second)
+            val url = "$API_PLAYER_WBI_V2?$signedQuery"
+            val json = httpGet(url)
+            val root = gson.fromJson(json, JsonObject::class.java)
+            if (root.get("code")?.asInt == 0) {
+                val data = root.getAsJsonObject("data")
+                val subObj = data?.getAsJsonObject("subtitle")
+                subObj?.getAsJsonArray("subtitles") ?: subObj?.getAsJsonArray("list")
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "请求 player/wbi/v2 失败: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * 从 x/player/v2 接口获取分P的字幕列表
      */
     private fun fetchSubtitlesFromPlayerV2(bvid: String, cid: Long): JsonArray? {
@@ -318,6 +418,69 @@ class BilibiliParser {
             Log.w(TAG, "请求 player/v2 失败: ${e.message}")
             null
         }
+    }
+
+    private fun getWbiKeys(): Pair<String, String>? {
+        val now = System.currentTimeMillis()
+        if (cachedImgKey != null && cachedSubKey != null && (now - lastWbiKeyFetchTime < 3600_000L)) {
+            return Pair(cachedImgKey!!, cachedSubKey!!)
+        }
+        return try {
+            val json = httpGet(API_NAV)
+            val root = gson.fromJson(json, JsonObject::class.java)
+            val wbiImg = root.getAsJsonObject("data")?.getAsJsonObject("wbi_img")
+            val imgUrl = wbiImg?.get("img_url")?.asString ?: ""
+            val subUrl = wbiImg?.get("sub_url")?.asString ?: ""
+            val imgKey = imgUrl.substringAfterLast("/").substringBefore(".")
+            val subKey = subUrl.substringAfterLast("/").substringBefore(".")
+            if (imgKey.isNotEmpty() && subKey.isNotEmpty()) {
+                cachedImgKey = imgKey
+                cachedSubKey = subKey
+                lastWbiKeyFetchTime = now
+                Pair(imgKey, subKey)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "获取 WBI 密钥失败: ${e.message}")
+            null
+        }
+    }
+
+    private fun getMixinKey(orig: String): String {
+        val sb = StringBuilder()
+        for (idx in MIXIN_KEY_ENC_TAB) {
+            if (idx < orig.length) {
+                sb.append(orig[idx])
+            }
+        }
+        return sb.toString().take(32)
+    }
+
+    private fun encWbi(params: Map<String, String>, imgKey: String, subKey: String): String {
+        val mixinKey = getMixinKey(imgKey + subKey)
+        val currTime = (System.currentTimeMillis() / 1000).toString()
+        val allParams = params.toMutableMap()
+        allParams["wts"] = currTime
+
+        val sorted = allParams.toSortedMap()
+        val filterRegex = Regex("[!*'()]")
+        val filteredParams = sorted.mapValues { (_, v) ->
+            v.replace(filterRegex, "")
+        }
+
+        val queryList = filteredParams.map { (k, v) ->
+            "${java.net.URLEncoder.encode(k, "UTF-8")}=${java.net.URLEncoder.encode(v, "UTF-8")}"
+        }
+        val queryStr = queryList.joinToString("&")
+        val wbiSign = md5(queryStr + mixinKey)
+        return "$queryStr&w_rid=$wbiSign"
+    }
+
+    private fun md5(input: String): String {
+        val md = java.security.MessageDigest.getInstance("MD5")
+        val bytes = md.digest(input.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 
     /**

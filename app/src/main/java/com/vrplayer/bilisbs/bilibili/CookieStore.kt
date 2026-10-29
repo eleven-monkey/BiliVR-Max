@@ -14,6 +14,7 @@ class CookieStore(context: Context) {
         private const val KEY_SESSDATA = "SESSDATA"
         private const val KEY_BILI_JCT = "bili_jct"
         private const val KEY_DEDE_USER_ID = "DedeUserID"
+        private const val KEY_FULL_COOKIE = "full_cookie"
     }
 
     private val prefs: SharedPreferences =
@@ -22,11 +23,12 @@ class CookieStore(context: Context) {
     /**
      * 保存登录后的 Cookie
      */
-    fun save(sessdata: String, biliJct: String = "", dedeUserId: String = "") {
+    fun save(sessdata: String, biliJct: String = "", dedeUserId: String = "", fullCookie: String = "") {
         prefs.edit()
             .putString(KEY_SESSDATA, sessdata)
             .putString(KEY_BILI_JCT, biliJct)
             .putString(KEY_DEDE_USER_ID, dedeUserId)
+            .putString(KEY_FULL_COOKIE, fullCookie)
             .apply()
     }
 
@@ -45,9 +47,13 @@ class CookieStore(context: Context) {
     }
 
     /**
-     * 组装成 HTTP Cookie 头的值
+     * 组装成 HTTP Cookie 头的值（优先使用完整 cookie，缺失则组装关键项）
      */
     fun toCookieHeader(): String? {
+        val full = prefs.getString(KEY_FULL_COOKIE, null)
+        if (!full.isNullOrBlank() && full.contains("SESSDATA")) {
+            return full
+        }
         val sessdata = getSessdata() ?: return null
         val parts = mutableListOf("SESSDATA=$sessdata")
         prefs.getString(KEY_BILI_JCT, null)?.let { parts.add("bili_jct=$it") }

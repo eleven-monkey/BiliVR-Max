@@ -103,7 +103,8 @@ class LoginActivity : AppCompatActivity() {
             cookieStore.save(
                 sessdata = sessdata!!,
                 biliJct = biliJct ?: "",
-                dedeUserId = dedeUserId ?: ""
+                dedeUserId = dedeUserId ?: "",
+                fullCookie = cookieString
             )
             Toast.makeText(this, "登录成功", Toast.LENGTH_SHORT).show()
             setResult(RESULT_LOGIN_SUCCESS)
